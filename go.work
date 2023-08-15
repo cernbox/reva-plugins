@@ -1,0 +1,14 @@
+go 1.21.0
+
+use (
+	./otg
+	./thumbnails
+	./eosprojects
+	./group
+	./user
+	./favorite
+	./preferences
+	./publicshare
+	./utils
+	./share
+)
