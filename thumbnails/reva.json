@@ -1,0 +1,13 @@
+{
+    "author": "Gianmaria Del Monte",
+    "licence": "Apache-2.0",
+    "module": "github.com/cernbox/reva-plugins/thumbnails",
+    "homepage": "https://github.com/cernbox/reva-plugins/tree/master/thumbnails",
+    "doc": "https://github.com/cernbox/reva-plugins/tree/master/thumbnails",
+    "plugins": [
+        {
+            "id": "http.services.thumbnails",
+            "description": "Service for generating thumbnails from images stored in reva"
+        }
+    ]
+}
