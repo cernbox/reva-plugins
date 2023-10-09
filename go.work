@@ -6,11 +6,7 @@ use (
 	./eosprojects
 	./group
 	./user
-	./favorite
-	./preferences
-	./publicshare
 	./utils
-	./share
 	./storage
 	./
 )
