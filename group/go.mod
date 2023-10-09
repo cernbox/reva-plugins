@@ -3,6 +3,7 @@ module github.com/cernbox/reva-plugins/group
 go 1.21.0
 
 require (
+	github.com/cernbox/reva-plugins/user v0.0.0-20230929123144-adeaaef4b4f4
 	github.com/cs3org/go-cs3apis v0.0.0-20230727093620-0f4399be4543
 	github.com/cs3org/reva v1.25.0
 	github.com/gomodule/redigo v1.8.9
