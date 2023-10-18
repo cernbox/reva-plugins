@@ -26,7 +26,7 @@ import (
 	"github.com/Masterminds/sprig"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva"
-	ctxpkg "github.com/cs3org/reva/pkg/ctx"
+	"github.com/cs3org/reva/pkg/appctx"
 	"github.com/cs3org/reva/pkg/errtypes"
 	"github.com/cs3org/reva/pkg/storage"
 	"github.com/cs3org/reva/pkg/storage/utils/eosfs"
@@ -113,7 +113,7 @@ func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *pro
 }
 
 func (w *wrapper) getMountID(ctx context.Context, r *provider.ResourceInfo) string {
-	u := ctxpkg.ContextMustGetUser(ctx)
+	u := appctx.ContextMustGetUser(ctx)
 	b := bytes.Buffer{}
 	if err := w.mountIDTemplate.Execute(&b, u); err != nil {
 		return ""

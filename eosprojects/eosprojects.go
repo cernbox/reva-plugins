@@ -13,7 +13,6 @@ import (
 	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
 	"github.com/cs3org/reva"
 	"github.com/cs3org/reva/pkg/appctx"
-	ctxpkg "github.com/cs3org/reva/pkg/ctx"
 	"github.com/cs3org/reva/pkg/errtypes"
 	"github.com/cs3org/reva/pkg/rgrpc/todo/pool"
 	"github.com/cs3org/reva/pkg/rhttp/global"
@@ -152,7 +151,7 @@ func (e *eosProj) GetProjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (e *eosProj) GetProjectAdmins(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	user, ok := ctxpkg.ContextGetUser(ctx)
+	user, ok := appctx.ContextGetUser(ctx)
 	if !ok {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -252,7 +251,7 @@ func (e *eosProj) getProjectAdmins(ctx context.Context, project string) ([]user,
 }
 
 func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
-	user, ok := ctxpkg.ContextGetUser(ctx)
+	user, ok := appctx.ContextGetUser(ctx)
 	if !ok {
 		return nil, errtypes.UserRequired("")
 	}

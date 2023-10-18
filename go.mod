@@ -21,7 +21,7 @@ require (
 	github.com/bluele/gcache v0.0.2 // indirect
 	github.com/creasty/defaults v1.7.0 // indirect
 	github.com/cs3org/go-cs3apis v0.0.0-20230727093620-0f4399be4543 // indirect
-	github.com/cs3org/reva v1.26.0 // indirect
+	github.com/cs3org/reva v1.26.1-0.20231017095256-99498d005191 // indirect
 	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.2 // indirect
 	github.com/glpatcern/go-mime v0.0.0-20221026162842-2a8d71ad17a9 // indirect
@@ -62,12 +62,12 @@ require (
 	go.step.sm/crypto v0.36.0 // indirect
 	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/image v0.13.0 // indirect
-	golang.org/x/net v0.16.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/sync v0.4.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
 	google.golang.org/genproto v0.0.0-20231009173412-8bfb1ae86b6c // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231009173412-8bfb1ae86b6c // indirect
-	google.golang.org/grpc v1.58.2 // indirect
+	google.golang.org/grpc v1.58.3 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 )
