@@ -21,6 +21,7 @@ package thumbnails
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,10 +39,9 @@ import (
 	typesv1beta1 "github.com/cs3org/go-cs3apis/cs3/types/v1beta1"
 	"github.com/cs3org/reva"
 	"github.com/cs3org/reva/pkg/appctx"
-	ctxpkg "github.com/cs3org/reva/pkg/ctx"
 	"github.com/cs3org/reva/pkg/errtypes"
+	"github.com/cs3org/reva/pkg/httpclient"
 	"github.com/cs3org/reva/pkg/rgrpc/todo/pool"
-	"github.com/cs3org/reva/pkg/rhttp"
 	"github.com/cs3org/reva/pkg/rhttp/global"
 	"github.com/cs3org/reva/pkg/rhttp/router"
 	"github.com/cs3org/reva/pkg/sharedconf"
@@ -115,7 +115,12 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		return nil, errors.Wrap(err, "error getting gateway client")
 	}
 
-	d := downloader.NewDownloader(gtw, rhttp.Insecure(c.Insecure))
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	client := httpclient.New(httpclient.RoundTripper(tr))
+	d := downloader.NewDownloader(gtw, client)
 
 	log := appctx.GetLogger(ctx)
 	mgr, err := manager.NewThumbnail(d, &manager.Config{
@@ -222,8 +227,8 @@ func (s *Thumbnails) davPublicContext(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx = metadata.AppendToOutgoingContext(ctx, ctxpkg.TokenHeader, rsp.Token)
-		ctx = ctxpkg.ContextSetToken(ctx, rsp.Token)
+		ctx = metadata.AppendToOutgoingContext(ctx, appctx.TokenHeader, rsp.Token)
+		ctx = appctx.ContextSetToken(ctx, rsp.Token)
 
 		res, err := s.statPublicFile(ctx, token, path, sign, auth)
 		if err != nil {
