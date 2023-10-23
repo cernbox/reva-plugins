@@ -6,7 +6,7 @@ require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
 	github.com/bluele/gcache v0.0.2
 	github.com/cs3org/go-cs3apis v0.0.0-20230727093620-0f4399be4543
-	github.com/cs3org/reva v0.0.0-00010101000000-000000000000
+	github.com/cs3org/reva v1.27.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-chi/chi/v5 v5.0.10
 	github.com/gomodule/redigo v1.8.9
