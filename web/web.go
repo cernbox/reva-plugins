@@ -44,15 +44,24 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 	}
 
 	log := appctx.GetLogger(ctx)
-	e := &web{
-		log: log,
-		c:   &c,
-	}
+
+	e := &web{log: log, c: &c}
 	return e, nil
 }
 
 func (e *web) Handler() http.Handler {
+	httpfsWeb := http.FS(webFS)
+	httpfsWebExt := http.FS(webExtFS)
+
+	webHandler := http.FileServer(httpfsWeb)
+	webExtHandler := http.FileServer(httpfsWebExt)
+
+	mux := http.NewServeMux()
+	mux.Handle("/cernbox", webHandler)
+	mux.Handle("/", webExtHandler)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r)
 	})
 }
 
@@ -65,5 +74,5 @@ func (e *web) Close() error {
 }
 
 func (e *web) Unprotected() []string {
-	return nil
+	return []string{"/"}
 }
