@@ -9,4 +9,5 @@ import (
 	_ "github.com/cernbox/reva-plugins/storage/eoswrapper"
 	_ "github.com/cernbox/reva-plugins/thumbnails"
 	_ "github.com/cernbox/reva-plugins/user"
+	_ "github.com/cernbox/reva-plugins/web"
 )
