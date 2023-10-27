@@ -61,7 +61,7 @@ type Otg struct {
 
 func (Otg) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
-		ID:  "http.services.thumbnails",
+		ID:  "http.services.otg",
 		New: New,
 	}
 }
