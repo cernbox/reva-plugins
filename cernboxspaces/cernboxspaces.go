@@ -73,7 +73,7 @@ var projectRegex = regexp.MustCompile(`^cernbox-project-(?P<Name>.+)-(?P<Permiss
 
 func (c *config) ApplyDefaults() {
 	if c.Prefix == "" {
-		c.Prefix = "projects"
+		c.Prefix = "cernboxspaces"
 	}
 
 	c.GatewaySvc = sharedconf.GetGatewaySVC(c.GatewaySvc)

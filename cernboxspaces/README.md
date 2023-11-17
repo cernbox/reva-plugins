@@ -14,5 +14,5 @@ host = "dbhost.example.org"
 port = 3306
 name = "dbname"
 table = "cbox_projects"
-prefix = "projects"
+prefix = "cernboxspaces"
 ```
