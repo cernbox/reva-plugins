@@ -8,7 +8,9 @@ Here is a list of plugins currently available in this repository:
 
     thumbnails: An HTTP service generating thumbnails.
 
-    eosprojects: An HTTP service exposing eos projects.
+    eosprojects: An HTTP service exposing eos projects (deprecated).
+
+    cernboxspaces: An HTTP service exposing eos projects and ceph spaces a user is part of.
 
     otg: An HTTP service exposing an OTG message.
 
