@@ -1,5 +1,6 @@
 # EOSProjects plugin
 
+This plugin is deprecated and will be dropped soon.
 The EOSProjects service is an HTTP plugin for reva that keeps an index of which projects a user is part of.
 
 ## Configuration
