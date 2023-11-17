@@ -285,8 +285,7 @@ func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
 
 	var dbProjects []string
 	dbProjectsPaths := make(map[string]string)
-	dbProjectsStorages := make(map[string]string)
-	query := fmt.Sprintf("SELECT project_name, eos_relative_path, storage FROM %s", e.c.Table)
+	query := fmt.Sprintf("SELECT project_name, eos_relative_path FROM %s", e.c.Table)
 	results, err := e.db.Query(query)
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting projects from db")
@@ -295,14 +294,12 @@ func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
 	for results.Next() {
 		var name string
 		var path string
-		var storage string
-		err = results.Scan(&name, &path, &storage)
+		err = results.Scan(&name, &path)
 		if err != nil {
 			return nil, errors.Wrap(err, "error scanning rows from db")
 		}
 		dbProjects = append(dbProjects, name)
 		dbProjectsPaths[name] = path
-		dbProjectsStorages[name] = storage
 	}
 
 	validProjects := intersect.Simple(dbProjects, userProjectsKeys)
@@ -311,22 +308,11 @@ func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
 	for _, p := range validProjects {
 		name := p.(string)
 		permissions := userProjects[name]
-		switch storage := dbProjectsStorages[name]; storage {
-		case "eos":
-			projects = append(projects, &project{
-				Name:        name,
-				Path:        fmt.Sprintf("/eos/project/%s", dbProjectsPaths[name]),
-				Permissions: permissions[:len(permissions)-1],
-			})
-		case "cephfs":
-			projects = append(projects, &project{
-				Name:        name,
-				Path:        fmt.Sprintf("/winspaces/%s", dbProjectsPaths[name]),
-				Permissions: permissions[:len(permissions)-1],
-			})
-		default:
-			continue
-		}
+		projects = append(projects, &project{
+			Name:        name,
+			Path:        fmt.Sprintf("/eos/project/%s", dbProjectsPaths[name]),
+			Permissions: permissions[:len(permissions)-1],
+		})
 	}
 
 	return projects, nil
