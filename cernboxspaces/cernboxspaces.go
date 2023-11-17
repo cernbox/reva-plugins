@@ -25,17 +25,26 @@ import (
 )
 
 func init() {
-	reva.RegisterPlugin(eosProj{})
+	reva.RegisterPlugin(cboxProj{})
 }
 
-type eosProj struct {
+type SpaceType int
+
+const (
+	SpaceType_INVALID SpaceType = iota
+	SpaceType_ALL
+	SpaceType_EOSPROJECT
+	SpaceType_WINSPACE
+)
+
+type cboxProj struct {
 	log    *zerolog.Logger
 	c      *config
 	db     *sql.DB
 	router *chi.Mux
 }
 
-func (eosProj) RevaPlugin() reva.PluginInfo {
+func (cboxProj) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "http.services.cernboxspaces",
 		New: New,
@@ -80,31 +89,31 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 
 	db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", c.Username, c.Password, c.Host, c.Port, c.Name))
 	if err != nil {
-		return nil, errors.Wrap(err, "error creating open sql connection")
+		return nil, errors.Wrap(err, "error creating sql connection")
 	}
 
 	r := chi.NewRouter()
 
 	log := appctx.GetLogger(ctx)
-	e := &eosProj{
+	p := &cboxProj{
 		log:    log,
 		c:      &c,
 		db:     db,
 		router: r,
 	}
 
-	e.initRouter()
+	p.initRouter()
 
-	return e, nil
+	return p, nil
 }
 
-func (e *eosProj) initRouter() {
-	e.router.Get("/{project}/admins", e.GetProjectAdmins)
-	e.router.Get("/", e.GetProjectsHandler)
+func (p *cboxProj) initRouter() {
+	p.router.Get("/{project}/admins", p.GetProjectAdmins)
+	p.router.Get("/", p.GetProjectsHandler)
 }
 
-func (e *eosProj) Handler() http.Handler {
-	return e.router
+func (p *cboxProj) Handler() http.Handler {
+	return p.router
 }
 
 func encodeProjectsInJSON(p []*project) ([]byte, error) {
@@ -116,22 +125,33 @@ func encodeProjectsInJSON(p []*project) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-func (e *eosProj) Prefix() string {
-	return e.c.Prefix
+func (p *cboxProj) Prefix() string {
+	return p.c.Prefix
 }
 
-func (e *eosProj) Close() error {
-	return e.db.Close()
+func (p *cboxProj) Close() error {
+	return p.db.Close()
 }
 
-func (e *eosProj) Unprotected() []string {
+func (p *cboxProj) Unprotected() []string {
 	return nil
 }
 
-func (e *eosProj) GetProjectsHandler(w http.ResponseWriter, r *http.Request) {
+func (p *cboxProj) GetProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	projects, err := e.getProjects(ctx)
+	var sType SpaceType
+	switch chi.URLParam(r, "type") {
+	case "eosprojects":
+		sType = SpaceType_EOSPROJECT
+	case "winspaces":
+		sType = SpaceType_WINSPACE
+	default:
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	spaces, err := p.getSpaces(ctx, sType)
 	if err != nil {
 		if errors.Is(err, errtypes.UserRequired("")) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -140,7 +160,7 @@ func (e *eosProj) GetProjectsHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
 
-	data, err := encodeProjectsInJSON(projects)
+	data, err := encodeProjectsInJSON(spaces)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -149,7 +169,7 @@ func (e *eosProj) GetProjectsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (e *eosProj) GetProjectAdmins(w http.ResponseWriter, r *http.Request) {
+func (p *cboxProj) GetProjectAdmins(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := appctx.ContextGetUser(ctx)
 	if !ok {
@@ -158,13 +178,12 @@ func (e *eosProj) GetProjectAdmins(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := chi.URLParam(r, "project")
-
-	if !e.userHasAccessToProject(ctx, user, project) {
+	if !p.userHasAccessToProject(ctx, user, project) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 
-	admins, err := e.getProjectAdmins(ctx, project)
+	admins, err := p.getProjectAdmins(ctx, project)
 	if err != nil {
 		// TODO: better error handling
 		w.WriteHeader(http.StatusInternalServerError)
@@ -186,22 +205,22 @@ type user struct {
 	DisplayName string `json:"display_name"`
 }
 
-func (e *eosProj) userHasAccessToProject(ctx context.Context, user *userpb.User, project string) bool {
-	projects, err := e.getProjects(ctx)
+func (p *cboxProj) userHasAccessToProject(ctx context.Context, user *userpb.User, spaceName string) bool {
+	spaces, err := p.getSpaces(ctx, SpaceType_ALL)
 	if err != nil {
 		return false
 	}
 
-	for _, p := range projects {
-		if p.Name == project {
+	for _, s := range spaces {
+		if s.Name == spaceName {
 			return true
 		}
 	}
 	return false
 }
 
-func (e *eosProj) getProjectAdmins(ctx context.Context, project string) ([]user, error) {
-	client, err := pool.GetGatewayServiceClient(pool.Endpoint(e.c.GatewaySvc))
+func (p *cboxProj) getProjectAdmins(ctx context.Context, project string) ([]user, error) {
+	client, err := pool.GetGatewayServiceClient(pool.Endpoint(p.c.GatewaySvc))
 	if err != nil {
 		return nil, err
 	}
@@ -250,16 +269,16 @@ func (e *eosProj) getProjectAdmins(ctx context.Context, project string) ([]user,
 	return users, nil
 }
 
-func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
+func (p *cboxProj) getSpaces(ctx context.Context, sType SpaceType) ([]*project, error) {
 	user, ok := appctx.ContextGetUser(ctx)
 	if !ok {
 		return nil, errtypes.UserRequired("")
 	}
 
 	groups := user.Groups
-	if e.c.SkipUserGroupsInToken {
+	if p.c.SkipUserGroupsInToken {
 		var err error
-		groups, err = e.getUserGroups(ctx, user)
+		groups, err = p.getUserGroups(ctx, user)
 		if err != nil {
 			return nil, errors.Wrap(err, "error getting user groups")
 		}
@@ -286,8 +305,17 @@ func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
 	var dbProjects []string
 	dbProjectsPaths := make(map[string]string)
 	dbProjectsStorages := make(map[string]string)
-	query := fmt.Sprintf("SELECT project_name, eos_relative_path, storage FROM %s", e.c.Table)
-	results, err := e.db.Query(query)
+	query := fmt.Sprintf("SELECT project_name, eos_relative_path, storage FROM %s", p.c.Table)
+	switch {
+	case sType == SpaceType_EOSPROJECT:
+		query = query + " WHERE storage = 'eos'"
+	case sType == SpaceType_WINSPACE:
+		query = query + " WHERE storage = 'cephfs'"
+	case sType == SpaceType_ALL:
+	default:
+		return nil, errtypes.BadRequest("Invalid space type")
+	}
+	results, err := p.db.Query(query)
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting projects from db")
 	}
@@ -332,8 +360,8 @@ func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
 	return projects, nil
 }
 
-func (e *eosProj) getUserGroups(ctx context.Context, user *userpb.User) ([]string, error) {
-	client, err := pool.GetGatewayServiceClient(pool.Endpoint(e.c.GatewaySvc))
+func (p *cboxProj) getUserGroups(ctx context.Context, user *userpb.User) ([]string, error) {
+	client, err := pool.GetGatewayServiceClient(pool.Endpoint(p.c.GatewaySvc))
 	if err != nil {
 		return nil, err
 	}
