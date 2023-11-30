@@ -20,6 +20,7 @@ package cback
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,7 +42,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
-	"github.com/rs/zerolog"
 )
 
 func init() {
@@ -78,8 +78,10 @@ func (svc) RevaPlugin() reva.PluginInfo {
 	}
 }
 
+var _ global.NewService = New
+
 // New returns a new cback http service.
-func New(m map[string]interface{}, log *zerolog.Logger) (global.Service, error) {
+func New(ctx context.Context, m map[string]interface{}) (global.Service, error) {
 	c := &config{}
 	if err := mapstructure.Decode(m, c); err != nil {
 		return nil, errors.Wrap(err, "cback: error decodinf config")

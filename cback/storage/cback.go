@@ -43,6 +43,7 @@ import (
 	"github.com/cs3org/reva/pkg/errtypes"
 	"github.com/cs3org/reva/pkg/mime"
 	"github.com/cs3org/reva/pkg/storage"
+	"github.com/cs3org/reva/pkg/storage/fs/registry"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 )
@@ -59,9 +60,11 @@ func init() {
 	reva.RegisterPlugin(fs{})
 }
 
+var _ registry.NewFunc = New
+
 // New returns an implementation to the storage.FS interface that expose
 // the snapshots stored in cback.
-func New(m map[string]interface{}) (storage.FS, error) {
+func New(_ context.Context, m map[string]interface{}) (storage.FS, error) {
 	c := &Config{}
 	if err := mapstructure.Decode(m, c); err != nil {
 		return nil, errors.Wrap(err, "cback: error decoding config")
