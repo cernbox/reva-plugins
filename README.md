@@ -12,7 +12,9 @@ Here is a list of plugins currently available in this repository:
 
     cernboxspaces: An HTTP service exposing eos projects and ceph spaces a user is part of.
 
-    otg: An HTTP service exposing an OTG message.
+    otg: An HTTP service exposing an OTG message (deprecated).
+
+    cback: An HTTP service and a storage provider to access and restore CERNBox backups.
 
 
 For more information about each plugin, please refer to the respective plugin's README file in the `<plugin>/` directory.
