@@ -526,7 +526,7 @@ func (f *fs) CreateStorageSpace(ctx context.Context, req *provider.CreateStorage
 	return nil, errtypes.NotSupported("Operation Not Permitted")
 }
 
-func (f *fs) ListRecycle(ctx context.Context, basePath, key, relativePath string) ([]*provider.RecycleItem, error) {
+func (f *fs) ListRecycle(ctx context.Context, basePath, key, relativePath string, from, to *types.Timestamp) ([]*provider.RecycleItem, error) {
 	return nil, errtypes.NotSupported("Operation Not Permitted")
 }
 
