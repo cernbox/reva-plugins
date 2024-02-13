@@ -562,7 +562,7 @@ func (f *fs) Unlock(ctx context.Context, ref *provider.Reference, lock *provider
 	return errtypes.NotSupported("Operation Not Permitted")
 }
 
-func (f *fs) Upload(ctx context.Context, ref *provider.Reference, r io.ReadCloser) error {
+func (f *fs) Upload(ctx context.Context, ref *provider.Reference, r io.ReadCloser, metadata map[string]string) error {
 	return errtypes.NotSupported("Operation Not Permitted")
 }
 
