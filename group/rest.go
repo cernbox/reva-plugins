@@ -275,7 +275,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		return users, nil
 	}
 
-	url := fmt.Sprintf("%s/api/v1.0/Group/%s/memberidentities/precomputed?limit=10&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source", m.conf.APIBaseURL, gid.OpaqueId)
+	url := fmt.Sprintf("%s/api/v1.0/Group/%s/memberidentities/recursive?limit=10&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source", m.conf.APIBaseURL, gid.OpaqueId)
 
 	var r user.IdentitiesResponse
 	members := []*userpb.UserId{}
