@@ -345,7 +345,7 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 	}
 
 	// TODO (gdelmont): support pagination! we may have problems with users having more than 1000 groups
-	url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups?field=displayName&recursive=true", m.conf.APIBaseURL, uid.OpaqueId)
+	url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?field=displayName", m.conf.APIBaseURL, uid.OpaqueId)
 
 	var r GroupsResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
