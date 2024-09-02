@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"regexp"
 
+	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
 	group "github.com/cs3org/go-cs3apis/cs3/identity/group/v1beta1"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
+	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
+
 	"github.com/cs3org/reva"
 	"github.com/cs3org/reva/pkg/appctx"
 	"github.com/cs3org/reva/pkg/errtypes"
@@ -55,9 +58,11 @@ type config struct {
 }
 
 type project struct {
-	Name        string `json:"name,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Permissions string `json:"permissions,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Path         string `json:"path,omitempty"`
+	Permissions  string `json:"permissions,omitempty"`
+	GrantedQuota uint64 `json:"granted_quota"`
+	UsedQuota    uint64 `json:"used_quota"`
 }
 
 var projectRegex = regexp.MustCompile(`^cernbox-project-(?P<Name>.+)-(?P<Permissions>admins|writers|readers)\z`)
@@ -304,14 +309,34 @@ func (e *eosProj) getProjects(ctx context.Context) ([]*project, error) {
 
 	validProjects := intersect.Simple(dbProjects, userProjectsKeys)
 
+	client, err := pool.GetGatewayServiceClient(pool.Endpoint(e.c.GatewaySvc))
+	if err != nil {
+		return nil, err
+	}
+
 	var projects []*project
 	for _, p := range validProjects {
 		name := p.(string)
+		path := fmt.Sprintf("/eos/project/%s", dbProjectsPaths[name])
+		ref := &provider.Reference{Path: path}
+		quotaReq := &gateway.GetQuotaRequest{Ref: ref}
+		quotaRes, err := client.GetQuota(ctx, quotaReq)
+		switch {
+		case err != nil:
+			return nil, err
+		case quotaRes.Status.Code == rpc.Code_CODE_NOT_FOUND:
+			return nil, errtypes.NotFound(fmt.Sprintf("eos path %s not found", path))
+		case quotaRes.Status.Code != rpc.Code_CODE_OK:
+			return nil, errtypes.InternalError(quotaRes.Status.Message)
+		}
+
 		permissions := userProjects[name]
 		projects = append(projects, &project{
-			Name:        name,
-			Path:        fmt.Sprintf("/eos/project/%s", dbProjectsPaths[name]),
-			Permissions: permissions[:len(permissions)-1],
+			Name:         name,
+			Path:         path,
+			Permissions:  permissions[:len(permissions)-1],
+			GrantedQuota: quotaRes.TotalBytes,
+			UsedQuota:    quotaRes.UsedBytes,
 		})
 	}
 
