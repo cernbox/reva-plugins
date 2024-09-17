@@ -184,10 +184,10 @@ func (i *Identity) UserType() userpb.UserType {
 	case "Secondary":
 		return userpb.UserType_USER_TYPE_SECONDARY
 	case "Person":
-		if i.Source == "cern" {
-			return userpb.UserType_USER_TYPE_PRIMARY
+		if i.Source == "cern" && i.UID > 0 {
+			return userpb.UserType_USER_TYPE_PRIMARY // CERN user
 		}
-		return userpb.UserType_USER_TYPE_LIGHTWEIGHT
+		return userpb.UserType_USER_TYPE_LIGHTWEIGHT // external user
 	default:
 		return userpb.UserType_USER_TYPE_INVALID
 	}
