@@ -224,12 +224,12 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 			Idp:      m.conf.IDProvider,
 			Type:     i.UserType(),
 		},
-		Username:    i.Upn,
 		Mail:        i.PrimaryAccountEmail,
 		DisplayName: i.DisplayName,
 		UidNumber:   int64(i.UID),
 		GidNumber:   int64(i.GID),
 	}
+	u.Username = utils.FormatUserID(u.Id)
 
 	if err := m.cacheUserDetails(u); err != nil {
 		log.Error().Err(err).Msg("rest: error caching user details")
