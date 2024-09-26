@@ -27,7 +27,8 @@ import (
 	"strings"
 	"time"
 
-	user "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
+	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
+	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
 	collaboration "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	typespb "github.com/cs3org/go-cs3apis/cs3/types/v1beta1"
@@ -35,6 +36,7 @@ import (
 	"github.com/cs3org/reva/pkg/appctx"
 	conversions "github.com/cs3org/reva/pkg/cbox/utils"
 	"github.com/cs3org/reva/pkg/errtypes"
+	"github.com/cs3org/reva/pkg/rgrpc/status"
 	"github.com/cs3org/reva/pkg/rgrpc/todo/pool"
 	"github.com/cs3org/reva/pkg/share"
 	"github.com/cs3org/reva/pkg/sharedconf"
@@ -120,7 +122,7 @@ func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collabora
 		ResourceId: md.Id,
 		Grantee:    g.Grantee,
 	}
-	_, err := m.getByKey(ctx, key, true)
+	_, err := m.getByKey(ctx, key, g.Grantee.GetUserId().Type, true)
 
 	// share already exists
 	if err == nil {
@@ -175,7 +177,7 @@ func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collabora
 	}, nil
 }
 
-func (m *mgr) getByID(ctx context.Context, id *collaboration.ShareId, checkOwner bool) (*collaboration.Share, error) {
+func (m *mgr) getByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType, checkOwner bool) (*collaboration.Share, error) {
 	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
 	s := conversions.DBShare{ID: id.OpaqueId}
 	query := "select coalesce(uid_owner, '') as uid_owner, coalesce(uid_initiator, '') as uid_initiator, lower(coalesce(share_with, '')) as share_with, coalesce(fileid_prefix, '') as fileid_prefix, coalesce(item_source, '') as item_source, coalesce(item_type, '') as item_type, stime, permissions, share_type FROM oc_share WHERE (orphan = 0 or orphan IS NULL) AND id=?"
@@ -190,10 +192,10 @@ func (m *mgr) getByID(ctx context.Context, id *collaboration.ShareId, checkOwner
 		}
 		return nil, err
 	}
-	return conversions.ConvertToCS3Share(s), nil
+	return conversions.ConvertToCS3Share(s, gtype), nil
 }
 
-func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool) (*collaboration.Share, error) {
+func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType, checkOwner bool) (*collaboration.Share, error) {
 	owner := conversions.FormatUserID(key.Owner)
 	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
 
@@ -211,21 +213,20 @@ func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOw
 		}
 		return nil, err
 	}
-	return conversions.ConvertToCS3Share(s), nil
+	return conversions.ConvertToCS3Share(s, gtype), nil
 }
 
 func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
-
 	var s *collaboration.Share
 	var err error
 	switch {
 	case ref.GetId() != nil:
-		s, err = m.getByID(ctx, ref.GetId(), false)
+		s, err = m.getByID(ctx, ref.GetId(), userpb.UserType_USER_TYPE_INVALID, false)
 		if err != nil {
 			return nil, err
 		}
 	case ref.GetKey() != nil:
-		s, err = m.getByKey(ctx, ref.GetKey(), false)
+		s, err = m.getByKey(ctx, ref.GetKey(), userpb.UserType_USER_TYPE_INVALID, false)
 		if err != nil {
 			return nil, err
 		}
@@ -233,13 +234,15 @@ func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (
 		err = errtypes.NotFound(ref.String())
 	}
 
+	// resolve grantee's user type
+	s.Grantee.GetUserId().Type, _ = m.getUserType(ctx, s.Grantee.GetUserId().OpaqueId)
+
 	path, err := m.getPath(ctx, s.ResourceId)
 	if err != nil {
 		return nil, err
 	}
 
 	user := appctx.ContextMustGetUser(ctx)
-
 	if m.isProjectAdmin(user, path) {
 		return s, nil
 	}
@@ -359,7 +362,8 @@ func (m *mgr) addPathIntoCtx(ctx context.Context, ref *collaboration.ShareRefere
 	var err error
 	switch {
 	case ref.GetId() != nil:
-		share, err := m.getByID(ctx, ref.GetId(), false)
+		// here we don't manipulate the grantee's user type, so just assume PRIMARY
+		share, err := m.getByID(ctx, ref.GetId(), userpb.UserType_USER_TYPE_PRIMARY, false)
 		if err != nil {
 			return nil, err
 		}
@@ -379,7 +383,7 @@ func (m *mgr) addPathIntoCtx(ctx context.Context, ref *collaboration.ShareRefere
 	return appctx.ContextSetResourcePath(ctx, path), nil
 }
 
-func (m *mgr) isProjectAdminFromCtx(ctx context.Context, u *user.User) bool {
+func (m *mgr) isProjectAdminFromCtx(ctx context.Context, u *userpb.User) bool {
 	path, ok := appctx.ContextGetResourcePath(ctx)
 	if !ok {
 		return false
@@ -387,7 +391,7 @@ func (m *mgr) isProjectAdminFromCtx(ctx context.Context, u *user.User) bool {
 	return m.isProjectAdmin(u, path)
 }
 
-func (m *mgr) isProjectAdmin(u *user.User, path string) bool {
+func (m *mgr) isProjectAdmin(u *userpb.User, path string) bool {
 	if strings.HasPrefix(path, projectPathPrefix) {
 		// The path will look like /eos/project/c/cernbox, we need to extract the project name
 		parts := strings.SplitN(path, "/", 6)
@@ -451,7 +455,11 @@ func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) (
 		if err := rows.Scan(&s.UIDOwner, &s.UIDInitiator, &s.ShareWith, &s.Prefix, &s.ItemSource, &s.ItemType, &s.ID, &s.STime, &s.Permissions, &s.ShareType); err != nil {
 			continue
 		}
-		shares = append(shares, conversions.ConvertToCS3Share(s))
+		gtype, _ := m.getUserType(ctx, s.ShareWith)
+		// if err != nil {
+		// failed to resolve grantee's user type, TODO Log
+		// }
+		shares = append(shares, conversions.ConvertToCS3Share(s, gtype))
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
@@ -504,7 +512,11 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 		if err := rows.Scan(&s.UIDOwner, &s.UIDInitiator, &s.ShareWith, &s.Prefix, &s.ItemSource, &s.ItemType, &s.ID, &s.STime, &s.Permissions, &s.ShareType, &s.State); err != nil {
 			continue
 		}
-		shares = append(shares, conversions.ConvertToCS3ReceivedShare(s))
+		gtype, _ := m.getUserType(ctx, s.ShareWith)
+		// if err != nil {
+		// failed to resolve grantee's user type, TODO Log
+		// }
+		shares = append(shares, conversions.ConvertToCS3ReceivedShare(s, gtype))
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
@@ -513,7 +525,7 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 	return shares, nil
 }
 
-func (m *mgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId) (*collaboration.ReceivedShare, error) {
+func (m *mgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 	uid := conversions.FormatUserID(user.Id)
 
@@ -539,10 +551,10 @@ func (m *mgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId) (*
 		}
 		return nil, err
 	}
-	return conversions.ConvertToCS3ReceivedShare(s), nil
+	return conversions.ConvertToCS3ReceivedShare(s, gtype), nil
 }
 
-func (m *mgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey) (*collaboration.ReceivedShare, error) {
+func (m *mgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 	uid := conversions.FormatUserID(user.Id)
 
@@ -570,7 +582,7 @@ func (m *mgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey)
 		}
 		return nil, err
 	}
-	return conversions.ConvertToCS3ReceivedShare(s), nil
+	return conversions.ConvertToCS3ReceivedShare(s, gtype), nil
 }
 
 func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.ReceivedShare, error) {
@@ -578,9 +590,9 @@ func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareRefe
 	var err error
 	switch {
 	case ref.GetId() != nil:
-		s, err = m.getReceivedByID(ctx, ref.GetId())
+		s, err = m.getReceivedByID(ctx, ref.GetId(), userpb.UserType_USER_TYPE_INVALID)
 	case ref.GetKey() != nil:
-		s, err = m.getReceivedByKey(ctx, ref.GetKey())
+		s, err = m.getReceivedByKey(ctx, ref.GetKey(), userpb.UserType_USER_TYPE_INVALID)
 	default:
 		err = errtypes.NotFound(ref.String())
 	}
@@ -588,6 +600,9 @@ func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareRefe
 	if err != nil {
 		return nil, err
 	}
+
+	// resolve grantee's user type
+	s.Share.Grantee.GetUserId().Type, _ = m.getUserType(ctx, s.Share.Grantee.GetUserId().OpaqueId)
 
 	return s, nil
 }
@@ -718,4 +733,23 @@ func translateFilters(filters map[collaboration.Filter_Type][]*collaboration.Fil
 		filterCounter++
 	}
 	return filterQuery, params, nil
+}
+
+func (m *mgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
+	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
+	if err != nil {
+		return userpb.UserType_USER_TYPE_PRIMARY, err
+	}
+	userRes, err := client.GetUserByClaim(ctx, &userpb.GetUserByClaimRequest{
+		Claim: "username",
+		Value: username,
+	})
+	if err != nil {
+		return userpb.UserType_USER_TYPE_PRIMARY, errors.Wrapf(err, "error getting user by username '%v'", username)
+	}
+	if userRes.Status.Code != rpc.Code_CODE_OK {
+		return userpb.UserType_USER_TYPE_PRIMARY, status.NewErrorFromCode(userRes.Status.Code, "oidc")
+	}
+
+	return userRes.GetUser().Id.Type, nil
 }

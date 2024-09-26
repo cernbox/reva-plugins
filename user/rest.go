@@ -159,6 +159,7 @@ type Identity struct {
 	Upn                 string `json:"upn"`
 	DisplayName         string `json:"displayName"`
 	Source              string `json:"source,omitempty"`
+	ActiveUser          bool   `json:"activeUser,omitempty"`
 	UID                 int    `json:"uid,omitempty"`
 	GID                 int    `json:"gid,omitempty"`
 }
@@ -184,8 +185,9 @@ func (i *Identity) UserType() userpb.UserType {
 	case "Secondary":
 		return userpb.UserType_USER_TYPE_SECONDARY
 	case "Person":
-		if i.Source == "cern" && i.UID > 0 {
-			return userpb.UserType_USER_TYPE_PRIMARY // CERN user
+		if i.Source == "cern" && i.ActiveUser {
+			// this is a CERN account; incidentally, also i.UID > 0 qualifies for that
+			return userpb.UserType_USER_TYPE_PRIMARY
 		}
 		return userpb.UserType_USER_TYPE_LIGHTWEIGHT // external user
 	default:
@@ -194,7 +196,7 @@ func (i *Identity) UserType() userpb.UserType {
 }
 
 func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1.0/Identity?field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source", m.conf.APIBaseURL)
+	url := fmt.Sprintf("%s/api/v1.0/Identity?field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser", m.conf.APIBaseURL)
 
 	for {
 		var r IdentitiesResponse
