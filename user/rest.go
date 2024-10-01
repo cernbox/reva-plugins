@@ -196,7 +196,7 @@ func (i *Identity) UserType() userpb.UserType {
 }
 
 func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1.0/Identity?field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser", m.conf.APIBaseURL)
+	url := fmt.Sprintf("%s/api/v1.0/Identity?filter=unconfirmed%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser", m.conf.APIBaseURL)
 
 	for {
 		var r IdentitiesResponse
