@@ -236,8 +236,10 @@ func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (
 		err = errtypes.NotFound(ref.String())
 	}
 
-	// resolve grantee's user type
-	s.Grantee.GetUserId().Type, _ = m.getUserType(ctx, s.Grantee.GetUserId().OpaqueId)
+	// resolve grantee's user type if applicable
+	if s.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_USER {
+		s.Grantee.GetUserId().Type, _ = m.getUserType(ctx, s.Grantee.GetUserId().OpaqueId)
+	}
 
 	path, err := m.getPath(ctx, s.ResourceId)
 	if err != nil {
@@ -602,8 +604,10 @@ func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareRefe
 		return nil, err
 	}
 
-	// resolve grantee's user type
-	s.Share.Grantee.GetUserId().Type, _ = m.getUserType(ctx, s.Share.Grantee.GetUserId().OpaqueId)
+	// resolve grantee's user type if applicable
+	if s.Share.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_USER {
+		s.Share.Grantee.GetUserId().Type, _ = m.getUserType(ctx, s.Share.Grantee.GetUserId().OpaqueId)
+	}
 
 	return s, nil
 }
