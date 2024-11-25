@@ -185,8 +185,10 @@ func (i *Identity) UserType() userpb.UserType {
 	case "Secondary":
 		return userpb.UserType_USER_TYPE_SECONDARY
 	case "Person":
-		if i.Source == "cern" && i.ActiveUser {
-			// this is a CERN account; incidentally, also i.UID > 0 qualifies for that
+		if i.Source == "cern" && i.UID > 0 {
+			// this is a CERN account; here we should check if i.ActiveUser = true,
+			// but users that have just left the Organization have ActiveUser = false,
+			// whereas users with UID = 0 are definitely non-primary.
 			return userpb.UserType_USER_TYPE_PRIMARY
 		}
 		return userpb.UserType_USER_TYPE_LIGHTWEIGHT // external user
