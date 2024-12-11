@@ -17,6 +17,9 @@ require (
 	github.com/rs/zerolog v1.33.0
 	google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576
 	google.golang.org/grpc v1.69.4
+	gorm.io/datatypes v1.2.4
+	gorm.io/driver/mysql v1.5.7
+	gorm.io/gorm v1.25.12
 )
 
 require (
@@ -41,6 +44,8 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/imdario/mergo v0.3.16 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
