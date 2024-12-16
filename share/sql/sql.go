@@ -41,6 +41,7 @@ import (
 	"github.com/cs3org/reva/pkg/utils/cfg"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	// Provides mysql drivers.
@@ -68,6 +69,7 @@ func (mgr) RevaPlugin() reva.PluginInfo {
 }
 
 type config struct {
+	Engine     string `mapstructure:"engine"` // mysql | sqlite
 	DBUsername string `mapstructure:"db_username"`
 	DBPassword string `mapstructure:"db_password"`
 	DBHost     string `mapstructure:"db_host"`
@@ -93,9 +95,17 @@ func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, erro
 		return nil, err
 	}
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	// db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName))
+	var db *gorm.DB
+	var err error
+	switch c.Engine {
+	case "mysql":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	case "sqlite":
+		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{})
+	default:
+		return nil, errors.New("ShareManager SQL: unsupported database type " + c.Engine)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -126,14 +136,24 @@ func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collabora
 		Grantee:    g.Grantee,
 	}
 	_, err := m.getByKey(ctx, key, true)
-
 	// share already exists
+	// TODO stricter error checking
 	if err == nil {
-		return nil, errtypes.AlreadyExists(key.String())
+		return nil, errors.New(errtypes.AlreadyExists(key.String()).Error())
+	}
+
+	var shareWith string
+	if g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_USER {
+		shareWith = conversions.FormatUserID(g.Grantee.GetUserId())
+	} else if g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP {
+		// ShareWith is a group
+		shareWith = g.Grantee.GetGroupId().OpaqueId
+	} else {
+		return nil, errors.New("Unsuppored grantee type passed to Share()")
 	}
 
 	share := &model.Share{
-		ShareWith:         conversions.FormatUserID(g.Grantee.GetUserId()),
+		ShareWith:         shareWith,
 		SharedWithIsGroup: g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP,
 	}
 	share.UIDOwner = conversions.FormatUserID(md.Owner)
@@ -172,14 +192,14 @@ func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOw
 	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
 
 	var share model.Share
-	shareType, shareWith := conversions.FormatGrantee(key.Grantee)
+	_, shareWith := conversions.FormatGrantee(key.Grantee)
 
 	query := m.db.Model(&share).
 		Where("orphan = ?", false).
 		Where("uid_owner = ?", owner).
-		Where("fileid_prefix = ?", key.ResourceId.StorageId).
-		Where("item_source = ?", key.ResourceId.OpaqueId).
-		Where("share_type = ?", shareType).
+		Where("instance = ?", key.ResourceId.StorageId).
+		Where("inode = ?", key.ResourceId.OpaqueId).
+		Where("shared_with_is_group = ?", key.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP).
 		Where("share_with = ?", strings.ToLower(shareWith))
 
 	if checkOwner {
@@ -206,13 +226,17 @@ func (m *mgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (
 			return nil, err
 		}
 	case ref.GetKey() != nil:
-		//s, err = m.getByKey(ctx, ref.GetKey(), userpb.UserType_USER_TYPE_INVALID, false)
 		s, err = m.getByKey(ctx, ref.GetKey(), false)
 		if err != nil {
 			return nil, err
 		}
 	default:
 		return nil, errtypes.NotFound(ref.String())
+	}
+
+	user := appctx.ContextMustGetUser(ctx)
+	if s.UIDOwner == user.Id.OpaqueId && s.UIDInitiator == user.Id.OpaqueId {
+		return s, nil
 	}
 
 	path, err := m.getPath(ctx, &provider.ResourceId{
@@ -223,12 +247,7 @@ func (m *mgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (
 		return nil, err
 	}
 
-	user := appctx.ContextMustGetUser(ctx)
 	if m.isProjectAdmin(user, path) {
-		return s, nil
-	}
-
-	if s.UIDOwner == user.Id.OpaqueId && s.UIDInitiator == user.Id.OpaqueId {
 		return s, nil
 	}
 
@@ -248,7 +267,7 @@ func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (
 }
 
 func (m *mgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) error {
-	share, err := m.GetShare(ctx, ref)
+	share, err := m.getShare(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -319,10 +338,9 @@ func (m *mgr) isProjectAdmin(u *userpb.User, path string) bool {
 }
 
 func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	var share model.Share
 	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
 
-	query := m.db.Model(&share).
+	query := m.db.Model(&model.Share{}).
 		Where("uid_owner = ? or uid_initiator = ?", uid, uid).
 		Where("orphan = ?", false)
 
@@ -338,7 +356,12 @@ func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) (
 
 	for _, s := range shares {
 		granteeType, _ := m.getUserType(ctx, s.ShareWith)
-		cs3shares = append(cs3shares, share.AsCS3Share(granteeType))
+		cs3share := s.AsCS3Share(granteeType)
+		cs3shares = append(cs3shares, cs3share)
+	}
+
+	if len(shares) > 0 {
+		fmt.Printf("First cs3share has id %s\n", cs3shares[0].Id.OpaqueId)
 	}
 
 	return cs3shares, nil
@@ -346,10 +369,9 @@ func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) (
 
 // we list the shares that are targeted to the user in context or to the user groups.
 func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.ReceivedShare, error) {
-	var share model.Share
 	user := appctx.ContextMustGetUser(ctx)
 
-	query := m.db.Model(&share).
+	query := m.db.Model(&model.Share{}).
 		Where("orphan = ?", false)
 
 	// Also search by all the groups the user is a member of
@@ -374,7 +396,7 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 
 	for _, s := range shares {
 		shareId := &collaboration.ShareId{
-			OpaqueId: strconv.Itoa(int(s.ID)),
+			OpaqueId: strconv.FormatUint(uint64(s.ID), 10),
 		}
 		shareState, err := m.getShareState(ctx, shareId, user)
 		if err != nil {
@@ -383,7 +405,7 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 
 		granteeType, _ := m.getUserType(ctx, s.ShareWith)
 
-		receivedShares = append(receivedShares, share.AsCS3ReceivedShare(shareState, granteeType))
+		receivedShares = append(receivedShares, s.AsCS3ReceivedShare(shareState, granteeType))
 	}
 
 	return receivedShares, nil
@@ -398,7 +420,20 @@ func (m *mgr) getShareState(ctx context.Context, shareId *collaboration.ShareId,
 	res := query.First(&shareState)
 
 	if res.RowsAffected == 0 {
-		return nil, errtypes.NotFound(shareId.OpaqueId)
+		shareIdInt, err := strconv.Atoi(shareId.OpaqueId)
+		if err != nil {
+			return nil, errors.New("Failed to fetch shareState, and failed to create one (share_id is not an int)")
+		}
+		// If no share state has been created yet, we create it now using these defaults
+		shareState = model.ShareState{
+			ShareID: uint(shareIdInt),
+			Hidden:  false,
+			Synced:  false,
+			User:    user.Username,
+		}
+		// Does not really matter if it fails, next time the user
+		// lists his shares this will just be called again
+		m.db.Save(&shareState)
 	}
 
 	return &shareState, nil
@@ -466,41 +501,46 @@ func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareRefe
 
 func (m *mgr) UpdateReceivedShare(ctx context.Context, share *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
 
-	// user := appctx.ContextMustGetUser(ctx)
+	user := appctx.ContextMustGetUser(ctx)
 
 	rs, err := m.GetReceivedShare(ctx, &collaboration.ShareReference{Spec: &collaboration.ShareReference_Id{Id: share.Share.Id}})
 	if err != nil {
 		return nil, err
 	}
 
-	// TODO: do actual update based on FieldMask
+	shareState, err := m.getShareState(ctx, share.Share.Id, user)
+	if err != nil {
+		return nil, err
+	}
 
-	res := m.db.Save(&rs.State)
+	// FieldMask determines which parts of the share we actually update
+	// Right now, only updating the state is supported
+	for _, path := range fieldMask.Paths {
+		switch path {
+		case "state":
+			rs.State = share.State
+		case "hidden":
+			rs.Hidden = share.Hidden
+		default:
+			return nil, errtypes.NotSupported("updating " + path + " is not supported")
+		}
+	}
+
+	// Now we do the actual update to the db model
+	switch rs.State {
+	case collaboration.ShareState_SHARE_STATE_ACCEPTED:
+		shareState.Hidden = false
+	case collaboration.ShareState_SHARE_STATE_REJECTED:
+		fmt.Printf("Updating share state to hidden\n")
+		shareState.Hidden = true
+	}
+
+	res := m.db.Save(&shareState)
 	if res.Error != nil {
 		return nil, res.Error
 	}
 
 	return rs, nil
-
-	// for i := range fieldMask.Paths {
-	// 	switch fieldMask.Paths[i] {
-	// 	case "state":
-	// 		rs.State = share.State
-	// 	default:
-	// 		return nil, errtypes.NotSupported("updating " + fieldMask.Paths[i] + " is not supported")
-	// 	}
-	// }
-
-	// state := 0
-	// switch rs.GetState() {
-	// case collaboration.ShareState_SHARE_STATE_REJECTED:
-	// 	state = -1
-	// case collaboration.ShareState_SHARE_STATE_ACCEPTED:
-	// 	state = 1
-	// }
-
-	// params := []interface{}{rs.Share.Id.OpaqueId, conversions.FormatUserID(user.Id), state, state}
-	// query := "insert into oc_share_status(id, recipient, state) values(?, ?, ?) ON DUPLICATE KEY UPDATE state = ?"
 }
 
 func (m *mgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
@@ -542,14 +582,6 @@ func (m *mgr) appendFiltersToQuery(query *gorm.DB, filters []*collaboration.Filt
 			query = query.Where(innerQuery)
 		case collaboration.Filter_TYPE_EXCLUDE_DENIALS:
 			query = query.Where("permissions > ?", 0)
-		case collaboration.Filter_TYPE_CREATOR:
-			break
-		case collaboration.Filter_TYPE_OWNER:
-			break
-		case collaboration.Filter_TYPE_STATE:
-			break
-		case collaboration.Filter_TYPE_SPACE_ID:
-			break
 		case collaboration.Filter_TYPE_GRANTEE_TYPE:
 			innerQuery := m.db
 			for i, filter := range filters {
