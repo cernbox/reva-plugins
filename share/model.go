@@ -47,7 +47,7 @@ import (
 // | notify_uploads_extra_recipients | varchar(2048)   | YES  |     | NULL    |                |
 // +---------------------------------+-----------------+------+-----+---------+----------------+
 
-type protoShare struct {
+type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
 	// such as creation_time, id etc
 	gorm.Model
@@ -66,13 +66,16 @@ type protoShare struct {
 }
 
 type Share struct {
-	protoShare
+	// Including gorm.Model will embed a number of gorm-default fields
+	// such as creation_time, id etc
+
+	ProtoShare
 	ShareWith         string
 	SharedWithIsGroup bool
 }
 
 type PublicLink struct {
-	protoShare
+	ProtoShare
 	Token string
 	// Enforce uniqueness in db re: Itemsource
 	Quicklink                    bool
@@ -86,7 +89,7 @@ type PublicLink struct {
 // Unique index on combo of (shareid, user)
 type ShareState struct {
 	gorm.Model
-	ShareId uint //foreign key to share
+	ShareID uint //foreign key to share
 	// Can not be uid because of lw accs
 	User   string
 	Synced bool
@@ -99,7 +102,7 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 	}
 	return &collaboration.Share{
 		Id: &collaboration.ShareId{
-			OpaqueId: strconv.Itoa(int(s.ID)),
+			OpaqueId: strconv.FormatUint(uint64(s.ID), 10),
 		},
 		//ResourceId:  &provider.Reference{StorageId: s.Prefix, NodeId: s.ItemSource},
 		ResourceId: &provider.ResourceId{
@@ -116,9 +119,18 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 }
 
 func (s *Share) AsCS3ReceivedShare(state *ShareState, granteeType userpb.UserType) *collaboration.ReceivedShare {
+	// Currently, some implementations still rely on the ShareState to determine whether a file is hidden
+	// instead of using the field
+	var rsharestate resourcespb.ShareState
+	if state.Hidden {
+		rsharestate = resourcespb.ShareState_SHARE_STATE_REJECTED
+	} else {
+		rsharestate = resourcespb.ShareState_SHARE_STATE_ACCEPTED
+	}
+
 	return &collaboration.ReceivedShare{
 		Share:  s.AsCS3Share(granteeType),
-		State:  resourcespb.ShareState_SHARE_STATE_ACCEPTED,
+		State:  rsharestate,
 		Hidden: state.Hidden,
 	}
 }
@@ -166,44 +178,21 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 	}
 }
 
-// The package 'conversions' is currently internal in Reva
-// It should become public so we can use it here
-// Since it generates CS3ResourcePermissions I'm not sure why it would be private
-
-// IntTosharePerm retrieves read/write permissions from an integer.
-func intTosharePerm(p int, itemType string) *provider.ResourcePermissions {
-	switch p {
-	case 1:
-		return conversions.NewViewerRole().CS3ResourcePermissions()
-	case 15:
-		if itemType == "folder" {
-			return conversions.NewEditorRole().CS3ResourcePermissions()
-		}
-		return conversions.NewFileEditorRole().CS3ResourcePermissions()
-	case 4:
-		return conversions.NewUploaderRole().CS3ResourcePermissions()
-	default:
-		// TODO we may have other options, for now this is a denial
-		return &provider.ResourcePermissions{}
-	}
-}
-
 // ExtractGrantee retrieves the CS3API Grantee from a grantee type and username/groupname.
 // The grantee userType is relevant only for users.
 func extractGrantee(sharedWithIsGroup bool, g string, gtype userpb.UserType) *provider.Grantee {
 	var grantee provider.Grantee
 	if sharedWithIsGroup {
+		grantee.Type = provider.GranteeType_GRANTEE_TYPE_GROUP
+		grantee.Id = &provider.Grantee_GroupId{GroupId: &grouppb.GroupId{
+			OpaqueId: g,
+		}}
+	} else {
 		grantee.Type = provider.GranteeType_GRANTEE_TYPE_USER
 		grantee.Id = &provider.Grantee_UserId{UserId: &userpb.UserId{
 			OpaqueId: g,
 			Type:     gtype,
 		}}
-	} else {
-		grantee.Type = provider.GranteeType_GRANTEE_TYPE_GROUP
-		grantee.Id = &provider.Grantee_GroupId{GroupId: &grouppb.GroupId{
-			OpaqueId: g,
-		}}
 	}
-
 	return &grantee
 }
