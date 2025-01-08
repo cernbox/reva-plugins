@@ -76,6 +76,7 @@ type config struct {
 	DBPort     int    `mapstructure:"db_port"`
 	DBName     string `mapstructure:"db_name"`
 	GatewaySvc string `mapstructure:"gatewaysvc"`
+	DryRun     bool   `mapstructure:"dry_run"`
 }
 
 type mgr struct {
@@ -98,13 +99,19 @@ func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, erro
 	var err error
 	switch c.Engine {
 	case "sqlite":
-		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{})
+		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{
+			DryRun: c.DryRun,
+		})
 	case "mysql":
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+			DryRun: c.DryRun,
+		})
 	default: // default is mysql
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+			DryRun: c.DryRun,
+		})
 	}
 	if err != nil {
 		return nil, err
@@ -121,6 +128,10 @@ func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, erro
 		c:  &c,
 		db: db,
 	}, nil
+}
+
+func (m *mgr) getDb() *gorm.DB {
+	return m.db
 }
 
 func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
