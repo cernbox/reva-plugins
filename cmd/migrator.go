@@ -15,9 +15,10 @@ func main() {
 	name := flag.String("name", "cernboxngcopy", "Database name")
 	gatewaysvc := flag.String("gatewaysvc", "localhost:9142", "Gateway service location")
 	token := flag.String("token", "", "JWT token for gateway svc")
+	dryRun := flag.Bool("dryrun", true, "Use dry run?")
 
 	flag.Parse()
 
 	fmt.Printf("Connecting to %s@%s:%d\n", *username, *host, *port)
-	sql.RunMigration(*username, *password, *host, *name, *gatewaysvc, *token, *port)
+	sql.RunMigration(*username, *password, *host, *name, *gatewaysvc, *token, *port, *dryRun)
 }
