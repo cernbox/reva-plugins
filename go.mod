@@ -1,6 +1,6 @@
 module github.com/cernbox/reva-plugins
 
-go 1.21.0
+go 1.22.7
 
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible

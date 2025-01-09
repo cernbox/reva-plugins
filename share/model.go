@@ -17,43 +17,25 @@ import (
 	"gorm.io/gorm"
 )
 
-// +---------------------------------+-----------------+------+-----+---------+----------------+
-// | Field                           | Type            | Null | Key | Default | Extra          |
-// +---------------------------------+-----------------+------+-----+---------+----------------+
-// | id                              | int             | NO   | PRI | NULL    | auto_increment |
-// | share_type                      | smallint        | NO   |     | 0       |                |
-// | share_with                      | varchar(255)    | YES  |     | NULL    |                |
-// | uid_owner                       | varchar(64)     | NO   |     |         |                |
-// | uid_initiator                   | varchar(64)     | YES  |     | NULL    |                |
-// | parent                          | int             | YES  |     | NULL    |                |
-// | item_type                       | varchar(64)     | NO   | MUL |         |                |
-// | item_source                     | varchar(255)    | YES  |     | NULL    |                |
-// | item_target                     | varchar(255)    | YES  |     | NULL    |                |
-// | file_source                     | bigint unsigned | YES  | MUL | NULL    |                |
-// | file_target                     | varchar(512)    | YES  |     | NULL    |                |
-// | permissions                     | smallint        | NO   |     | 0       |                |
-// | stime                           | bigint          | NO   |     | 0       |                |
-// | accepted                        | smallint        | NO   |     | 0       |                |
-// | expiration                      | datetime        | YES  |     | NULL    |                |
-// | token                           | varchar(32)     | YES  | MUL | NULL    |                |
-// | mail_send                       | smallint        | NO   |     | 0       |                |
-// | fileid_prefix                   | varchar(255)    | YES  |     | NULL    |                |
-// | orphan                          | tinyint         | YES  |     | NULL    |                |
-// | share_name                      | varchar(255)    | YES  |     | NULL    |                |
-// | quicklink                       | tinyint(1)      | NO   |     | 0       |                |
-// | description                     | varchar(1024)   | NO   |     |         |                |
-// | internal                        | tinyint(1)      | NO   | MUL | 0       |                |
-// | notify_uploads                  | tinyint(1)      | NO   |     | 0       |                |
-// | notify_uploads_extra_recipients | varchar(2048)   | YES  |     | NULL    |                |
-// +---------------------------------+-----------------+------+-----+---------+----------------+
+type ItemType string
+
+const (
+	ItemTypeFile      ItemType = "file"
+	ItemTypeFolder    ItemType = "folder"
+	ItemTypeReference ItemType = "reference"
+	ItemTypeSymlink   ItemType = "symlink"
+)
+
+func (i ItemType) String() string {
+	return string(i)
+}
 
 type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
-	// such as creation_time, id etc
 	gorm.Model
 	UIDOwner     string
 	UIDInitiator string
-	ItemType     string // file | folder
+	ItemType     ItemType // file | folder | reference | symlink
 	InitialPath  string
 	Inode        string
 	FileSource   int64
@@ -66,9 +48,6 @@ type ProtoShare struct {
 }
 
 type Share struct {
-	// Including gorm.Model will embed a number of gorm-default fields
-	// such as creation_time, id etc
-
 	ProtoShare
 	ShareWith         string
 	SharedWithIsGroup bool
@@ -86,10 +65,9 @@ type PublicLink struct {
 	ShareName string
 }
 
-// Unique index on combo of (shareid, user)
 type ShareState struct {
 	gorm.Model
-	ShareID uint //foreign key to share
+	Share Share
 	// Can not be uid because of lw accs
 	User   string
 	Synced bool
@@ -109,7 +87,7 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 			StorageId: s.Instance,
 			OpaqueId:  s.Inode,
 		},
-		Permissions: &collaboration.SharePermissions{Permissions: conversions.IntTosharePerm(int(s.Permissions), s.ItemType)},
+		Permissions: &collaboration.SharePermissions{Permissions: conversions.IntTosharePerm(int(s.Permissions), s.ItemType.String())},
 		Grantee:     extractGrantee(s.SharedWithIsGroup, s.ShareWith, granteeType),
 		Owner:       conversions.MakeUserID(s.UIDOwner),
 		Creator:     conversions.MakeUserID(s.UIDInitiator),
@@ -146,8 +124,8 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 	var expires *typespb.Timestamp
 	if p.Expiration.Valid {
 		exp, err := p.Expiration.V.Value()
-		expiration := exp.(time.Time)
 		if err == nil {
+			expiration := exp.(time.Time)
 			expires = &typespb.Timestamp{
 				Seconds: uint64(expiration.Unix()),
 			}
@@ -162,7 +140,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 			StorageId: p.Instance,
 			OpaqueId:  p.Inode,
 		},
-		Permissions:                  &link.PublicSharePermissions{Permissions: conversions.IntTosharePerm(int(p.Permissions), p.ItemType)},
+		Permissions:                  &link.PublicSharePermissions{Permissions: conversions.IntTosharePerm(int(p.Permissions), p.ItemType.String())},
 		Owner:                        conversions.MakeUserID(p.UIDOwner),
 		Creator:                      conversions.MakeUserID(p.UIDInitiator),
 		Token:                        p.Token,

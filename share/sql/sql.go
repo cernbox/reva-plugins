@@ -159,7 +159,7 @@ func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collabora
 	share.UIDOwner = conversions.FormatUserID(md.Owner)
 	share.UIDInitiator = conversions.FormatUserID(user.Id)
 	share.InitialPath = md.Path
-	share.ItemType = conversions.ResourceTypeToItem(md.Type)
+	share.ItemType = model.ItemType(conversions.ResourceTypeToItem(md.Type))
 	share.Inode = md.Id.OpaqueId
 	share.Instance = md.Id.StorageId
 	share.Permissions = uint8(conversions.SharePermToInt(g.Permissions.Permissions))
@@ -189,7 +189,6 @@ func (m *mgr) getByID(ctx context.Context, id *collaboration.ShareId) (*model.Sh
 // Get Share by Key. Does not return orphans.
 func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool) (*model.Share, error) {
 	owner := conversions.FormatUserID(key.Owner)
-	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
 
 	var share model.Share
 	_, shareWith := conversions.FormatGrantee(key.Grantee)
@@ -203,6 +202,7 @@ func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOw
 		Where("share_with = ?", strings.ToLower(shareWith))
 
 	if checkOwner {
+		uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
 		query = query.
 			Where("uid_owner = ? or uid_initiator = ?", uid, uid)
 	}
@@ -222,16 +222,13 @@ func (m *mgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (
 	switch {
 	case ref.GetId() != nil:
 		s, err = m.getByID(ctx, ref.GetId())
-		if err != nil {
-			return nil, err
-		}
 	case ref.GetKey() != nil:
 		s, err = m.getByKey(ctx, ref.GetKey(), false)
-		if err != nil {
-			return nil, err
-		}
 	default:
-		return nil, errtypes.NotFound(ref.String())
+		err = errtypes.NotFound(ref.String())
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	user := appctx.ContextMustGetUser(ctx)
@@ -251,7 +248,7 @@ func (m *mgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (
 		return s, nil
 	}
 
-	return s, nil
+	return nil, errtypes.NotFound(ref.String())
 }
 
 func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
@@ -358,10 +355,6 @@ func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) (
 		granteeType, _ := m.getUserType(ctx, s.ShareWith)
 		cs3share := s.AsCS3Share(granteeType)
 		cs3shares = append(cs3shares, cs3share)
-	}
-
-	if len(shares) > 0 {
-		fmt.Printf("First cs3share has id %s\n", cs3shares[0].Id.OpaqueId)
 	}
 
 	return cs3shares, nil
@@ -531,7 +524,6 @@ func (m *mgr) UpdateReceivedShare(ctx context.Context, share *collaboration.Rece
 	case collaboration.ShareState_SHARE_STATE_ACCEPTED:
 		shareState.Hidden = false
 	case collaboration.ShareState_SHARE_STATE_REJECTED:
-		fmt.Printf("Updating share state to hidden\n")
 		shareState.Hidden = true
 	}
 
