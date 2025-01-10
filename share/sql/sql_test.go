@@ -363,6 +363,7 @@ func TestListReceivedShares(t *testing.T) {
 
 	if len(receivedShares) != 1 {
 		t.Errorf("Expected 1 received share, got %d", len(receivedShares))
+		t.FailNow()
 	}
 
 	if receivedShares[0].Share.Id.OpaqueId != res.Id.OpaqueId {
