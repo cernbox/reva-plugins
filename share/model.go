@@ -67,7 +67,8 @@ type PublicLink struct {
 
 type ShareState struct {
 	gorm.Model
-	Share Share
+	ShareID uint  `gorm:"foreignKey:ShareID;references:ID"` // Define the foreign key field
+	Share   Share // Define the association
 	// Can not be uid because of lw accs
 	User   string
 	Synced bool
