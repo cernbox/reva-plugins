@@ -264,7 +264,21 @@ func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (
 }
 
 func (m *mgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) error {
-	share, err := m.getShare(ctx, ref)
+	var share *model.Share
+	var err error
+	if id := ref.GetId(); id != nil {
+		var intId int
+		intId, err = strconv.Atoi(id.OpaqueId)
+		share = &model.Share{
+			ProtoShare: model.ProtoShare{
+				Model: gorm.Model{
+					ID: uint(intId),
+				},
+			},
+		}
+	} else {
+		share, err = m.getShare(ctx, ref)
+	}
 	if err != nil {
 		return err
 	}
@@ -273,15 +287,27 @@ func (m *mgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) er
 }
 
 func (m *mgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, p *collaboration.SharePermissions) (*collaboration.Share, error) {
-	permissions := conversions.SharePermToInt(p.Permissions)
-	share, err := m.getShare(ctx, ref)
+	var share *model.Share
+	var err error
+	if id := ref.GetId(); id != nil {
+		var intId int
+		intId, err = strconv.Atoi(id.OpaqueId)
+		share = &model.Share{
+			ProtoShare: model.ProtoShare{
+				Model: gorm.Model{
+					ID: uint(intId),
+				},
+			},
+		}
+	} else {
+		share, err = m.getShare(ctx, ref)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	share.Permissions = uint8(permissions)
-
-	res := m.db.Save(&share)
+	permissions := conversions.SharePermToInt(p.Permissions)
+	res := m.db.Model(&share).Update("permissions", uint8(permissions))
 	if res.Error != nil {
 		return nil, res.Error
 	}

@@ -38,8 +38,6 @@ type ProtoShare struct {
 	ItemType     ItemType // file | folder | reference | symlink
 	InitialPath  string
 	Inode        string
-	FileSource   int64
-	FileTarget   string
 	Permissions  uint8
 	Instance     string
 	Orphan       bool
