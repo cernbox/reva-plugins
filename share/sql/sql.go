@@ -329,7 +329,12 @@ func (m *mgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, 
 		return "", err
 	}
 
-	return res.GetPath(), nil
+	if res.Status.Code == rpc.Code_CODE_OK {
+		return res.GetPath(), nil
+	} else if res.Status.Code == rpc.Code_CODE_NOT_FOUND {
+		return "", errtypes.NotFound(resID.OpaqueId)
+	}
+	return "", errors.New(res.Status.Code.String() + ": " + res.Status.Message)
 }
 
 func (m *mgr) isProjectAdmin(u *userpb.User, path string) bool {
