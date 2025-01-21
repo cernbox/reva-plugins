@@ -71,6 +71,7 @@ type ShareState struct {
 	User   string
 	Synced bool
 	Hidden bool
+	Alias  string
 }
 
 func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
