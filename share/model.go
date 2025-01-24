@@ -38,17 +38,17 @@ type ProtoShare struct {
 	ItemType     ItemType // file | folder | reference | symlink
 	InitialPath  string
 	Inode        string
-	Permissions  uint8
 	Instance     string
+	Permissions  uint8
 	Orphan       bool
-	Description  string
-	Expiration   datatypes.Null[datatypes.Date]
+	Expiration   datatypes.NullTime
 }
 
 type Share struct {
 	ProtoShare
 	ShareWith         string
 	SharedWithIsGroup bool
+	Description       string
 }
 
 type PublicLink struct {
@@ -60,7 +60,7 @@ type PublicLink struct {
 	NotifyUploadsExtraRecipients string
 	Password                     string
 	// Users can give a name to a share
-	ShareName string
+	LinkName string
 }
 
 type ShareState struct {
@@ -75,8 +75,11 @@ type ShareState struct {
 }
 
 func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
-	ts := &typespb.Timestamp{
+	creationTs := &typespb.Timestamp{
 		Seconds: uint64(s.CreatedAt.Unix()),
+	}
+	updateTs := &typespb.Timestamp{
+		Seconds: uint64(s.UpdatedAt.Unix()),
 	}
 	return &collaboration.Share{
 		Id: &collaboration.ShareId{
@@ -91,8 +94,8 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 		Grantee:     extractGrantee(s.SharedWithIsGroup, s.ShareWith, granteeType),
 		Owner:       conversions.MakeUserID(s.UIDOwner),
 		Creator:     conversions.MakeUserID(s.UIDInitiator),
-		Ctime:       ts,
-		Mtime:       ts,
+		Ctime:       creationTs,
+		Mtime:       updateTs,
 	}
 }
 
@@ -123,7 +126,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 	}
 	var expires *typespb.Timestamp
 	if p.Expiration.Valid {
-		exp, err := p.Expiration.V.Value()
+		exp, err := p.Expiration.Value()
 		if err == nil {
 			expiration := exp.(time.Time)
 			expires = &typespb.Timestamp{
@@ -144,13 +147,12 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 		Owner:                        conversions.MakeUserID(p.UIDOwner),
 		Creator:                      conversions.MakeUserID(p.UIDInitiator),
 		Token:                        p.Token,
-		DisplayName:                  p.ShareName,
+		DisplayName:                  p.LinkName,
 		PasswordProtected:            pwd,
 		Expiration:                   expires,
 		Ctime:                        ts,
 		Mtime:                        ts,
 		Quicklink:                    p.Quicklink,
-		Description:                  p.Description,
 		NotifyUploads:                p.NotifyUploads,
 		NotifyUploadsExtraRecipients: p.NotifyUploadsExtraRecipients,
 	}

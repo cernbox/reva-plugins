@@ -79,8 +79,7 @@ type config struct {
 }
 
 type mgr struct {
-	c *config
-	//db *sql.DB
+	c  *config
 	db *gorm.DB
 }
 
@@ -267,15 +266,7 @@ func (m *mgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) er
 	var share *model.Share
 	var err error
 	if id := ref.GetId(); id != nil {
-		var intId int
-		intId, err = strconv.Atoi(id.OpaqueId)
-		share = &model.Share{
-			ProtoShare: model.ProtoShare{
-				Model: gorm.Model{
-					ID: uint(intId),
-				},
-			},
-		}
+		share, err = emptyShareWithId(id.OpaqueId)
 	} else {
 		share, err = m.getShare(ctx, ref)
 	}
@@ -290,15 +281,7 @@ func (m *mgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference
 	var share *model.Share
 	var err error
 	if id := ref.GetId(); id != nil {
-		var intId int
-		intId, err = strconv.Atoi(id.OpaqueId)
-		share = &model.Share{
-			ProtoShare: model.ProtoShare{
-				Model: gorm.Model{
-					ID: uint(intId),
-				},
-			},
-		}
+		share, err = emptyShareWithId(id.OpaqueId)
 	} else {
 		share, err = m.getShare(ctx, ref)
 	}
@@ -432,7 +415,6 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 	return receivedShares, nil
 }
 
-// shareId *collaboration.ShareId
 func (m *mgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
 	var shareState model.ShareState
 	query := m.db.Model(&shareState).
@@ -449,12 +431,24 @@ func (m *mgr) getShareState(ctx context.Context, share *model.Share, user *userp
 			Synced: false,
 			User:   user.Username,
 		}
-		// Does not really matter if it fails, next time the user
-		// lists his shares this will just be called again
-		m.db.Save(&shareState)
 	}
 
 	return &shareState, nil
+}
+
+func emptyShareWithId(id string) (*model.Share, error) {
+	intId, err := strconv.Atoi(id)
+	if err != nil {
+		return nil, err
+	}
+	share := &model.Share{
+		ProtoShare: model.ProtoShare{
+			Model: gorm.Model{
+				ID: uint(intId),
+			},
+		},
+	}
+	return share, nil
 }
 
 func (m *mgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
@@ -513,27 +507,21 @@ func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareRefe
 	return s, nil
 }
 
-func (m *mgr) UpdateReceivedShare(ctx context.Context, share *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
+func (m *mgr) UpdateReceivedShare(ctx context.Context, recvShare *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
 
 	user := appctx.ContextMustGetUser(ctx)
 
-	rs, err := m.getReceivedByID(ctx, share.Share.Id, user.Id.Type)
+	rs, err := m.getReceivedByID(ctx, recvShare.Share.Id, user.Id.Type)
 	if err != nil {
 		return nil, err
 	}
 
-	shareId, err := strconv.Atoi(share.Share.Id.OpaqueId)
+	share, err := emptyShareWithId(recvShare.Share.Id.OpaqueId)
 	if err != nil {
 		return nil, err
 	}
 
-	shareState, err := m.getShareState(ctx, &model.Share{
-		ProtoShare: model.ProtoShare{
-			Model: gorm.Model{
-				ID: uint(shareId),
-			},
-		},
-	}, user)
+	shareState, err := m.getShareState(ctx, share, user)
 	if err != nil {
 		return nil, err
 	}
@@ -542,21 +530,21 @@ func (m *mgr) UpdateReceivedShare(ctx context.Context, share *collaboration.Rece
 	for _, path := range fieldMask.Paths {
 		switch path {
 		case "state":
-			rs.State = share.State
+			rs.State = recvShare.State
+			switch rs.State {
+			case collaboration.ShareState_SHARE_STATE_ACCEPTED:
+				shareState.Hidden = false
+			case collaboration.ShareState_SHARE_STATE_REJECTED:
+				shareState.Hidden = true
+			}
 		case "hidden":
-			rs.Hidden = share.Hidden
+			rs.Hidden = recvShare.Hidden
 		default:
 			return nil, errtypes.NotSupported("updating " + path + " is not supported")
 		}
 	}
 
 	// Now we do the actual update to the db model
-	switch rs.State {
-	case collaboration.ShareState_SHARE_STATE_ACCEPTED:
-		shareState.Hidden = false
-	case collaboration.ShareState_SHARE_STATE_REJECTED:
-		shareState.Hidden = true
-	}
 
 	res := m.db.Save(&shareState)
 	if res.Error != nil {
