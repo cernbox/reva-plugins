@@ -5,7 +5,7 @@ go 1.22.7
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
 	github.com/bluele/gcache v0.0.2
-	github.com/cs3org/go-cs3apis v0.0.0-20241105092511-3ad35d174fc1
+	github.com/cs3org/go-cs3apis v0.0.0-20250128143938-cc671934a7a1
 	github.com/cs3org/reva v1.27.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-chi/chi/v5 v5.2.0

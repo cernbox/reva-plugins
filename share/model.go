@@ -96,6 +96,7 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 		Creator:     conversions.MakeUserID(s.UIDInitiator),
 		Ctime:       creationTs,
 		Mtime:       updateTs,
+		Description: s.Description,
 	}
 }
 
@@ -113,6 +114,7 @@ func (s *Share) AsCS3ReceivedShare(state *ShareState, granteeType userpb.UserTyp
 		Share:  s.AsCS3Share(granteeType),
 		State:  rsharestate,
 		Hidden: state.Hidden,
+		Alias:  state.Alias,
 	}
 }
 

@@ -110,7 +110,11 @@ func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, erro
 	}
 
 	// Migrate schemas
-	db.AutoMigrate(&model.Share{}, &model.PublicLink{}, &model.ShareState{})
+	err = db.AutoMigrate(&model.Share{}, &model.PublicLink{}, &model.ShareState{})
+
+	if err != nil {
+		return nil, err
+	}
 
 	return &mgr{
 		c:  &c,
