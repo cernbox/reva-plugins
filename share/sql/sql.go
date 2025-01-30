@@ -97,13 +97,14 @@ func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, erro
 	var db *gorm.DB
 	var err error
 	switch c.Engine {
-	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	case "sqlite":
 		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{})
-	default:
-		return nil, errors.New("ShareManager SQL: unsupported database type " + c.Engine)
+	case "mysql":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	default: // default is mysql
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
+		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	}
 	if err != nil {
 		return nil, err
