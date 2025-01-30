@@ -288,22 +288,22 @@ func workerState(ctx context.Context, migrator Migrator, ch chan *OldShareState)
 func handleSingleShare(ctx context.Context, migrator Migrator, s *OldShareEntry) {
 	share, err := oldShareToNewShare(ctx, migrator, s)
 	if err != nil {
+		fmt.Printf("An error occured while migrating share %ds: %s\n", s.ID, err.Error())
 		return
 	}
-	// TODO error handling
+	var res *gorm.DB
 	if share.IsShare {
-		migrator.NewDb.Create(&share.Share)
+		res = migrator.NewDb.Create(&share.Share)
 	} else {
-		migrator.NewDb.Create(&share.Link)
+		res = migrator.NewDb.Create(&share.Link)
+	}
+
+	if res.Error != nil {
+		fmt.Printf("An error occured while migrating share %ds: %s\n", s.ID, res.Error.Error())
 	}
 }
 
 func handleSingleState(ctx context.Context, migrator Migrator, s *OldShareState) {
-	// case collaboration.ShareState_SHARE_STATE_REJECTED:
-	// 	state = -1
-	// case collaboration.ShareState_SHARE_STATE_ACCEPTED:
-	// 	state = 1
-
 	newShareState := &model.ShareState{
 		ShareID: uint(s.id),
 		Model: gorm.Model{
@@ -311,9 +311,12 @@ func handleSingleState(ctx context.Context, migrator Migrator, s *OldShareState)
 		},
 		User:   s.recipient,
 		Hidden: s.state == -1, // Hidden if REJECTED
-		Synced: true,          // for now, we always sync? or not? TODO
+		Synced: false,
 	}
-	migrator.NewDb.Create(&newShareState)
+	res := migrator.NewDb.Create(&newShareState)
+	if res.Error != nil {
+		fmt.Printf("An error occured while migrating share state (%d, %s): %s\n", s.id, s.recipient, res.Error.Error())
+	}
 }
 
 func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry) (*ShareOrLink, error) {
