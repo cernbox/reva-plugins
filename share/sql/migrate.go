@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	model "github.com/cernbox/reva-plugins/share"
@@ -144,7 +145,7 @@ type OldShareState struct {
 
 const (
 	bufferSize = 10
-	numWorkers = 10
+	numWorkers = 5
 )
 
 func RunMigration(username, password, host, name, gatewaysvc, token string, port int, dryRun bool) {
@@ -159,6 +160,7 @@ func RunMigration(username, password, host, name, gatewaysvc, token string, port
 		"gatewaysvc":  gatewaysvc,
 		"dry_run":     dryRun,
 	}
+
 	// Authenticate to gateway service
 	tokenlessCtx, cancel := context.WithCancel(context.Background())
 	ctx := appctx.ContextSetToken(tokenlessCtx, token)
@@ -186,6 +188,8 @@ func RunMigration(username, password, host, name, gatewaysvc, token string, port
 	if dryRun {
 		migrator.NewDb = migrator.NewDb.Debug()
 	}
+
+	migrator.NewDb.AutoMigrate(&model.Share{}, &model.PublicLink{}, &model.ShareState{})
 
 	migrateShares(ctx, migrator)
 	fmt.Println("---------------------------------")
@@ -215,11 +219,11 @@ func migrateShares(ctx context.Context, migrator Migrator) {
 
 	// Create channel for workers
 	ch := make(chan *OldShareEntry, bufferSize)
-	defer close(ch)
+	var wg sync.WaitGroup
 
 	// Start all workers
 	for range numWorkers {
-		go workerShare(ctx, migrator, ch)
+		go workerShare(ctx, migrator, ch, &wg)
 	}
 
 	for res.Next() {
@@ -231,6 +235,9 @@ func migrateShares(ctx context.Context, migrator Migrator) {
 			fmt.Printf("Error occured for share %d: %s\n", s.ID, err.Error())
 		}
 	}
+
+	close(ch)
+	wg.Wait()
 }
 
 func migrateShareStatuses(ctx context.Context, migrator Migrator) {
@@ -255,11 +262,12 @@ func migrateShareStatuses(ctx context.Context, migrator Migrator) {
 
 	// Create channel for workers
 	ch := make(chan *OldShareState, bufferSize)
-	defer close(ch)
+
+	var wg sync.WaitGroup
 
 	// Start all workers
 	for range numWorkers {
-		go workerState(ctx, migrator, ch)
+		go workerState(ctx, migrator, ch, &wg)
 	}
 
 	for res.Next() {
@@ -271,18 +279,24 @@ func migrateShareStatuses(ctx context.Context, migrator Migrator) {
 			fmt.Printf("Error occured for share status%d: %s\n", s.id, err.Error())
 		}
 	}
+	close(ch)
+	wg.Wait()
 }
 
-func workerShare(ctx context.Context, migrator Migrator, ch chan *OldShareEntry) {
+func workerShare(ctx context.Context, migrator Migrator, ch chan *OldShareEntry, wg *sync.WaitGroup) {
+	wg.Add(1)
 	for share := range ch {
 		handleSingleShare(ctx, migrator, share)
 	}
+	wg.Done()
 }
 
-func workerState(ctx context.Context, migrator Migrator, ch chan *OldShareState) {
+func workerState(ctx context.Context, migrator Migrator, ch chan *OldShareState, wg *sync.WaitGroup) {
+	wg.Add(1)
 	for state := range ch {
 		handleSingleState(ctx, migrator, state)
 	}
+	wg.Done()
 }
 
 func handleSingleShare(ctx context.Context, migrator Migrator, s *OldShareEntry) {
@@ -306,12 +320,9 @@ func handleSingleShare(ctx context.Context, migrator Migrator, s *OldShareEntry)
 func handleSingleState(ctx context.Context, migrator Migrator, s *OldShareState) {
 	newShareState := &model.ShareState{
 		ShareID: uint(s.id),
-		Model: gorm.Model{
-			ID: uint(s.id),
-		},
-		User:   s.recipient,
-		Hidden: s.state == -1, // Hidden if REJECTED
-		Synced: false,
+		User:    s.recipient,
+		Hidden:  s.state == -1, // Hidden if REJECTED
+		Synced:  false,
 	}
 	res := migrator.NewDb.Create(&newShareState)
 	if res.Error != nil {
@@ -351,6 +362,7 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 		if err == nil {
 			protoShare.InitialPath = path
 		} else if errors.Is(err, errtypes.NotFound(protoShare.Inode)) {
+			fmt.Printf("Marked share %d as an orphan (%s, %s)\n", s.ID, protoShare.Instance, protoShare.Inode)
 			protoShare.Orphan = true
 		} else {
 			// We do not set, because of a general error
