@@ -289,10 +289,10 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		})
 		members = append(members, users...)
 
-		if r.Pagination.Links.Next == nil {
+		if r.Pagination.Next == nil {
 			break
 		}
-		url = fmt.Sprintf("%s%s", m.conf.APIBaseURL, *r.Pagination.Links.Next)
+		url = fmt.Sprintf("%s%s", m.conf.APIBaseURL, *r.Pagination.Next)
 	}
 
 	if err = m.cacheGroupMembers(gid, members); err != nil {
