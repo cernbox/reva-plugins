@@ -42,6 +42,7 @@ type ProtoShare struct {
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
+	PreviousID   uint `gorm:"uniqueIndex"`
 }
 
 type Share struct {
