@@ -33,12 +33,12 @@ func (i ItemType) String() string {
 type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
 	gorm.Model
-	UIDOwner     string
-	UIDInitiator string
-	ItemType     ItemType // file | folder | reference | symlink
+	UIDOwner     string   `gorm:"size:64"`
+	UIDInitiator string   `gorm:"size:64"`
+	ItemType     ItemType `gorm:"size:16"` // file | folder | reference | symlink
 	InitialPath  string
-	Inode        string
-	Instance     string
+	Inode        string `gorm:"size:32"`
+	Instance     string `gorm:"size:32"`
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
@@ -46,9 +46,9 @@ type ProtoShare struct {
 
 type Share struct {
 	ProtoShare
-	ShareWith         string
+	ShareWith         string `gorm:"size:255"` // 255 because this can be a lw account, which are mapped from email addresses
 	SharedWithIsGroup bool
-	Description       string
+	Description       string `gorm:"size:1024"`
 }
 
 type PublicLink struct {
@@ -58,9 +58,9 @@ type PublicLink struct {
 	Quicklink                    bool
 	NotifyUploads                bool
 	NotifyUploadsExtraRecipients string
-	Password                     string
+	Password                     string `gorm:"size:255"`
 	// Users can give a name to a share
-	LinkName string
+	LinkName string `gorm:"size:64"`
 }
 
 type ShareState struct {
@@ -68,10 +68,10 @@ type ShareState struct {
 	ShareID uint  `gorm:"foreignKey:ShareID;references:ID;uniqueIndex:i_shareid_user"` // Define the foreign key field
 	Share   Share // Define the association
 	// Can not be uid because of lw accs
-	User   string `gorm:"uniqueIndex:i_shareid_user"`
+	User   string `gorm:"uniqueIndex:i_shareid_user;size:255"`
 	Synced bool
 	Hidden bool
-	Alias  string
+	Alias  string `gorm:"size:64"`
 }
 
 func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
