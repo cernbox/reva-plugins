@@ -51,7 +51,7 @@ require (
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-<<<<<<< HEAD
+	github.com/mattn/go-sqlite3 v1.14.24 // indirect
 	github.com/mileusna/useragent v1.3.5 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
@@ -64,23 +64,6 @@ require (
 	golang.org/x/text v0.21.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250102185135-69823020774d // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
-	github.com/mattn/go-sqlite3 v1.14.24 // indirect
-	github.com/rogpeppe/go-internal v1.11.0 // indirect
-=======
-	github.com/mattn/go-sqlite3 v1.14.24 // indirect
-	github.com/mileusna/useragent v1.3.5 // indirect
-	github.com/mitchellh/copystructure v1.2.0 // indirect
-	github.com/mitchellh/reflectwalk v1.0.2 // indirect
-	go.step.sm/crypto v0.55.0 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/image v0.13.0 // indirect
-	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20241209162323-e6fa225c2576 // indirect
-	google.golang.org/protobuf v1.36.1 // indirect
->>>>>>> 9cc87e9 (Add alias field to ShareState)
 )
 
 replace github.com/cs3org/reva => ../reva
