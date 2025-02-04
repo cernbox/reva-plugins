@@ -35,10 +35,10 @@ type ProtoShare struct {
 	gorm.Model
 	UIDOwner     string   `gorm:"size:64"`
 	UIDInitiator string   `gorm:"size:64"`
-	ItemType     ItemType `gorm:"size:16"` // file | folder | reference | symlink
+	ItemType     ItemType `gorm:"size:16;index:i_item_type"` // file | folder | reference | symlink
 	InitialPath  string
-	Inode        string `gorm:"size:32"`
-	Instance     string `gorm:"size:32"`
+	Inode        string `gorm:"size:32;index:i_inode"`
+	Instance     string `gorm:"size:32;index:i_instance"`
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
@@ -46,14 +46,14 @@ type ProtoShare struct {
 
 type Share struct {
 	ProtoShare
-	ShareWith         string `gorm:"size:255"` // 255 because this can be a lw account, which are mapped from email addresses
+	ShareWith         string `gorm:"size:255;index:i_share_with"` // 255 because this can be a lw account, which are mapped from email addresses / ...
 	SharedWithIsGroup bool
 	Description       string `gorm:"size:1024"`
 }
 
 type PublicLink struct {
 	ProtoShare
-	Token string
+	Token string `gorm:"index:i_token"`
 	// Enforce uniqueness in db re: Itemsource
 	Quicklink                    bool
 	NotifyUploads                bool
