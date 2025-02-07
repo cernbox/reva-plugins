@@ -233,7 +233,7 @@ func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (
 			return nil, err
 		}
 	default:
-		err = errtypes.NotFound(ref.String())
+		return nil, errtypes.NotFound(ref.String())
 	}
 
 	// resolve grantee's user type if applicable
