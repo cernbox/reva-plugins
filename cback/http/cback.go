@@ -48,8 +48,6 @@ func init() {
 	reva.RegisterPlugin(svc{})
 }
 
-const webdavPrefix = "/remote.php/dav/files/"
-
 type config struct {
 	Prefix            string `mapstructure:"prefix"`
 	Token             string `mapstructure:"token"`
