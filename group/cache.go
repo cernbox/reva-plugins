@@ -162,17 +162,17 @@ func (m *manager) cacheGroupDetails(g *grouppb.Group) error {
 	if err != nil {
 		return err
 	}
-	if err = m.setVal(groupPrefix+idPrefix+strings.ToLower(g.Id.OpaqueId), string(encodedGroup), -1); err != nil {
+	if err = m.setVal(groupPrefix+idPrefix+strings.ToLower(g.Id.OpaqueId), string(encodedGroup), 5*m.conf.GroupFetchInterval); err != nil {
 		return err
 	}
 
 	if g.GidNumber != 0 {
-		if err = m.setVal(groupPrefix+gidPrefix+strconv.FormatInt(g.GidNumber, 10), g.Id.OpaqueId, -1); err != nil {
+		if err = m.setVal(groupPrefix+gidPrefix+strconv.FormatInt(g.GidNumber, 10), g.Id.OpaqueId, 5*m.conf.GroupFetchInterval); err != nil {
 			return err
 		}
 	}
 	if g.DisplayName != "" {
-		if err = m.setVal(groupPrefix+namePrefix+g.Id.OpaqueId+"_"+strings.ToLower(g.DisplayName), g.Id.OpaqueId, -1); err != nil {
+		if err = m.setVal(groupPrefix+namePrefix+g.Id.OpaqueId+"_"+strings.ToLower(g.DisplayName), g.Id.OpaqueId, 5*m.conf.GroupFetchInterval); err != nil {
 			return err
 		}
 	}
