@@ -133,7 +133,7 @@ type OldShareEntry struct {
 	Quicklink                    bool
 	Description                  string
 	NotifyUploads                bool
-	NotifyUploadsExtraRecipients sql.NullString
+	NotifyUploadsExtraRecipients string
 	Orphan                       bool
 }
 
@@ -207,7 +207,7 @@ func migrateShares(ctx context.Context, migrator Migrator) {
 	fmt.Printf("Migrating %d shares\n", count)
 
 	// Get all old shares
-	query := "select id, coalesce(uid_owner, '') as uid_owner, coalesce(uid_initiator, '') as uid_initiator, lower(coalesce(share_with, '')) as share_with, coalesce(fileid_prefix, '') as fileid_prefix, coalesce(item_source, '') as item_source, coalesce(item_type, '') as item_type, stime, permissions, share_type, orphan FROM oc_share order by id desc" // AND id=?"
+	query := "select id, coalesce(uid_owner, '') as uid_owner, coalesce(uid_initiator, '') as uid_initiator, lower(coalesce(share_with, '')) as share_with, coalesce(fileid_prefix, '') as fileid_prefix, coalesce(item_source, '') as item_source, coalesce(item_type, '') as item_type, coalesce(token, '') as token, expiration, stime, permissions, share_type, coalesce(share_name, '') as share_name, notify_uploads, coalesce(notify_uploads_extra_recipients, '') as notify_uploads_extra_recipients, orphan FROM oc_share order by id desc" // AND id=?"
 	params := []interface{}{}
 
 	res, err := migrator.OldDb.Query(query, params...)
@@ -228,7 +228,7 @@ func migrateShares(ctx context.Context, migrator Migrator) {
 
 	for res.Next() {
 		var s OldShareEntry
-		res.Scan(&s.ID, &s.UIDOwner, &s.UIDInitiator, &s.ShareWith, &s.Prefix, &s.ItemSource, &s.ItemType, &s.STime, &s.Permissions, &s.ShareType, &s.Orphan)
+		res.Scan(&s.ID, &s.UIDOwner, &s.UIDInitiator, &s.ShareWith, &s.Prefix, &s.ItemSource, &s.ItemType, &s.Token, &s.Expiration, &s.STime, &s.Permissions, &s.ShareType, &s.ShareName, &s.NotifyUploads, &s.NotifyUploadsExtraRecipients, &s.Orphan)
 		if err == nil {
 			ch <- &s
 		} else {
@@ -386,10 +386,6 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 			},
 		}, nil
 	} else if s.ShareType == 3 {
-		notifyUploadsExtraRecipients := ""
-		if s.NotifyUploadsExtraRecipients.Valid {
-			notifyUploadsExtraRecipients = s.NotifyUploadsExtraRecipients.String
-		}
 		return &ShareOrLink{
 			IsShare: false,
 			Link: &model.PublicLink{
@@ -397,7 +393,7 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 				Token:                        s.Token,
 				Quicklink:                    s.Quicklink,
 				NotifyUploads:                s.NotifyUploads,
-				NotifyUploadsExtraRecipients: notifyUploadsExtraRecipients,
+				NotifyUploadsExtraRecipients: s.NotifyUploadsExtraRecipients,
 				Password:                     s.ShareWith,
 				LinkName:                     s.ShareName,
 			},
