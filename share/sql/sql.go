@@ -130,10 +130,6 @@ func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, erro
 	}, nil
 }
 
-func (m *mgr) getDb() *gorm.DB {
-	return m.db
-}
-
 func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
 	user := appctx.ContextMustGetUser(ctx)
 
