@@ -123,7 +123,7 @@ type OldShareEntry struct {
 	ItemType                     string
 	ShareWith                    string
 	Token                        string
-	Expiration                   string
+	Expiration                   sql.NullTime
 	Permissions                  int
 	ShareType                    int
 	ShareName                    string
@@ -174,7 +174,7 @@ func RunMigration(username, password, host, name, gatewaysvc, token string, port
 		os.Exit(1)
 	}
 	sharemgr := shareManager.(*mgr)
-	oldDb, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, name))
+	oldDb, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", username, password, host, port, name))
 	if err != nil {
 		fmt.Println("Failed to create db: " + err.Error())
 		os.Exit(1)
@@ -331,21 +331,28 @@ func handleSingleState(ctx context.Context, migrator Migrator, s *OldShareState)
 }
 
 func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry) (*ShareOrLink, error) {
-	expirationDate, expirationError := time.Parse("2006-01-02 15:04:05", s.Expiration)
-
+	var createdAt, updatedAt time.Time
+	if s.STime != 0 {
+		createdAt = time.Unix(int64(s.STime), 0)
+		updatedAt = time.Unix(int64(s.STime), 0)
+	} else {
+		createdAt = time.Now()
+		updatedAt = time.Now()
+		fmt.Printf("WARN: STime not set for share %d\n", s.ID)
+	}
 	protoShare := model.ProtoShare{
 		Model: gorm.Model{
 			ID:        uint(s.ID),
-			CreatedAt: time.Unix(int64(s.STime), 0),
-			UpdatedAt: time.Unix(int64(s.STime), 0),
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
 		},
 		UIDOwner:     s.UIDOwner,
 		UIDInitiator: s.UIDInitiator,
 		Permissions:  uint8(s.Permissions),
 		Orphan:       s.Orphan, // will be re-checked later
-		Expiration: datatypes.Null[time.Time]{
-			V:     expirationDate,
-			Valid: expirationError == nil,
+		Expiration: datatypes.NullTime{
+			Valid: s.Expiration.Valid,
+			V:     s.Expiration.Time,
 		},
 		ItemType:    model.ItemType(s.ItemType),
 		InitialPath: "", // set later
@@ -366,7 +373,7 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 			protoShare.Orphan = true
 		} else {
 			// We do not set, because of a general error
-			fmt.Printf("An error occured for share %d while statting (%s, %s): %s\n", s.ID, protoShare.Instance, protoShare.Inode, err.Error())
+			// fmt.Printf("An error occured for share %d while statting (%s, %s): %s\n", s.ID, protoShare.Instance, protoShare.Inode, err.Error())
 		}
 	}
 
@@ -386,6 +393,7 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 			},
 		}, nil
 	} else if s.ShareType == 3 {
+
 		return &ShareOrLink{
 			IsShare: false,
 			Link: &model.PublicLink{

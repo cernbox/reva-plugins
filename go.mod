@@ -17,7 +17,6 @@ require (
 	github.com/rs/zerolog v1.33.0
 	google.golang.org/genproto v0.0.0-20241209162323-e6fa225c2576
 	google.golang.org/grpc v1.69.4
-	gorm.io/datatypes v1.2.4
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.12
@@ -64,6 +63,7 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250102185135-69823020774d // indirect
 	google.golang.org/protobuf v1.36.4 // indirect
+	gorm.io/datatypes v1.2.5
 )
 
 replace github.com/cs3org/reva => ../reva
