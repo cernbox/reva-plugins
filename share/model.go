@@ -60,7 +60,7 @@ type PublicLink struct {
 	NotifyUploadsExtraRecipients string
 	Password                     string `gorm:"size:255"`
 	// Users can give a name to a share
-	LinkName string `gorm:"size:64"`
+	LinkName string `gorm:"size:512"`
 }
 
 type ShareState struct {
