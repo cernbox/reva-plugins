@@ -125,10 +125,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 	ts := &typespb.Timestamp{
 		Seconds: uint64(p.CreatedAt.Unix()),
 	}
-	pwd := false
-	if p.Password != "" {
-		pwd = true
-	}
+
 	var expires *typespb.Timestamp
 	if p.Expiration.Valid {
 		exp, err := p.Expiration.Value()
@@ -153,7 +150,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 		Creator:                      conversions.MakeUserID(p.UIDInitiator),
 		Token:                        p.Token,
 		DisplayName:                  p.LinkName,
-		PasswordProtected:            pwd,
+		PasswordProtected:            p.Password != "",
 		Expiration:                   expires,
 		Ctime:                        ts,
 		Mtime:                        ts,

@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	model "github.com/cernbox/reva-plugins/share"
@@ -107,8 +108,9 @@ func (m *mgr) UpdatePublicShare(ctx context.Context, u *user.User, req *link.Upd
 	var publiclink *model.PublicLink
 	var err error
 
+	// We need to actually get the link to make sure it is not expired
 	if id := req.Ref.GetId(); id != nil {
-		publiclink, err = emptyLinkWithId(id.OpaqueId)
+		publiclink, err = m.getLinkByID(ctx, id)
 	} else {
 		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken())
 	}
@@ -119,7 +121,6 @@ func (m *mgr) UpdatePublicShare(ctx context.Context, u *user.User, req *link.Upd
 	var res *gorm.DB
 	switch req.GetUpdate().GetType() {
 	case link.UpdatePublicShareRequest_Update_TYPE_DISPLAYNAME:
-		//publiclink. req.Update.GetDisplayName()
 		res = m.db.Model(&publiclink).Update("link_name", req.Update.GetDisplayName())
 	case link.UpdatePublicShareRequest_Update_TYPE_PERMISSIONS:
 		permissions := conversions.SharePermToInt(req.Update.GetGrant().GetPermissions().Permissions)
@@ -198,7 +199,9 @@ func (m *mgr) ListPublicShares(ctx context.Context, u *user.User, filters []*lin
 	}
 
 	for _, l := range links {
-		cs3links = append(cs3links, l.AsCS3PublicShare())
+		if !isExpired(l) {
+			cs3links = append(cs3links, l.AsCS3PublicShare())
+		}
 	}
 
 	return cs3links, nil
@@ -207,8 +210,9 @@ func (m *mgr) ListPublicShares(ctx context.Context, u *user.User, filters []*lin
 func (m *mgr) RevokePublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference) error {
 	var err error
 	var publiclink *model.PublicLink
+	// We need to actually get the link to make sure it is not expired
 	if id := ref.GetId(); id != nil {
-		publiclink, err = emptyLinkWithId(id.OpaqueId)
+		publiclink, err = m.getLinkByID(ctx, id)
 	} else {
 		publiclink, err = m.getLinkByToken(ctx, ref.GetToken())
 	}
@@ -220,6 +224,8 @@ func (m *mgr) RevokePublicShare(ctx context.Context, u *user.User, ref *link.Pub
 
 }
 
+// Get a PublicShare identified by token. This function returns `errtypes.InvalidCredentials` if `auth` does not contain
+// a valid password or signature in case the PublicShare is password-protected
 func (m *mgr) GetPublicShareByToken(ctx context.Context, token string, auth *link.PublicShareAuthentication, sign bool) (*link.PublicShare, error) {
 	publiclink, err := m.getLinkByToken(ctx, token)
 	if err != nil {
@@ -228,11 +234,18 @@ func (m *mgr) GetPublicShareByToken(ctx context.Context, token string, auth *lin
 
 	cs3link := publiclink.AsCS3PublicShare()
 
-	if sign {
-		// TODO; what is the signature? Why does it require the password?
-		if err := publicshare.AddSignature(cs3link, publiclink.Password); err != nil {
-			return nil, err
+	// If the link has a password, check that it was provided correctly
+	if publiclink.Password != "" {
+		if !isValidAuthForLink(publiclink, auth) {
+			return nil, errtypes.InvalidCredentials(token)
 		}
+
+		if sign {
+			if err := publicshare.AddSignature(cs3link, publiclink.Password); err != nil {
+				return nil, err
+			}
+		}
+
 	}
 
 	return cs3link, nil
@@ -250,14 +263,23 @@ func (m *mgr) getLinkByID(ctx context.Context, id *link.PublicShareId) (*model.P
 	return &link, nil
 }
 
-// Get Link by token. Does not return orphans.
+// Get Link by token. Does not return orphans or expired links.
 func (m *mgr) getLinkByToken(ctx context.Context, token string) (*model.PublicLink, error) {
+	if token == "" {
+		return nil, errors.New("no token provided to getLinkByToken")
+	}
+
 	var link model.PublicLink
-	res := m.db.First(&link).
-		Where("token = ?", token)
+	res := m.db.Model(&model.PublicLink{}).
+		Where("token = ?", token).
+		First(&link)
 
 	if res.RowsAffected == 0 || link.Orphan || isExpired(link) {
 		return nil, errtypes.NotFound(token)
+	}
+
+	if res.Error != nil {
+		return nil, res.Error
 	}
 
 	return &link, nil
@@ -268,6 +290,33 @@ func hashPassword(password string, cost int) (string, error) {
 	return "1|" + string(bytes), err
 }
 
+func checkPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(strings.TrimPrefix(hash, "1|")), []byte(password))
+	return err == nil
+}
+
+func isValidAuthForLink(link *model.PublicLink, auth *link.PublicShareAuthentication) bool {
+	switch {
+	case auth.GetPassword() != "":
+		return checkPasswordHash(auth.GetPassword(), link.Password)
+	case auth.GetSignature() != nil:
+		sig := auth.GetSignature()
+		now := time.Now()
+		expiration := time.Unix(int64(sig.GetSignatureExpiration().GetSeconds()), int64(sig.GetSignatureExpiration().GetNanos()))
+		if now.After(expiration) {
+			return false
+		}
+		s, err := publicshare.CreateSignature(link.Token, link.Password, expiration)
+		if err != nil {
+			// TODO(labkode): pass context to call to log err.
+			// No we are blind
+			return false
+		}
+		return sig.GetSignature() == s
+	}
+	return false
+}
+
 func isExpired(l model.PublicLink) bool {
 	if l.Expiration.Valid {
 		expTime := l.Expiration.V
@@ -276,26 +325,11 @@ func isExpired(l model.PublicLink) bool {
 	return false
 }
 
-func emptyLinkWithId(id string) (*model.PublicLink, error) {
-	intId, err := strconv.Atoi(id)
-	if err != nil {
-		return nil, err
-	}
-	link := &model.PublicLink{
-		ProtoShare: model.ProtoShare{
-			Model: gorm.Model{
-				ID: uint(intId),
-			},
-		},
-	}
-	return link, nil
-}
-
 func (m *mgr) appendLinkFiltersToQuery(query *gorm.DB, filters []*link.ListPublicSharesRequest_Filter) {
 	// We want to chain filters of different types with AND
 	// and filters of the same type with OR
 	// Therefore, we group them by type
-	groupedFilters := groupFiltersByType(filters)
+	groupedFilters := publicshare.GroupFiltersByType(filters)
 
 	for filtertype, filters := range groupedFilters {
 		switch filtertype {
@@ -330,16 +364,6 @@ func (m *mgr) appendLinkFiltersToQuery(query *gorm.DB, filters []*link.ListPubli
 				}
 			}
 			query = query.Where(innerQuery)
-		default:
-			break
 		}
 	}
-}
-
-func groupFiltersByType(filters []*link.ListPublicSharesRequest_Filter) map[link.ListPublicSharesRequest_Filter_Type][]*link.ListPublicSharesRequest_Filter {
-	grouped := make(map[link.ListPublicSharesRequest_Filter_Type][]*link.ListPublicSharesRequest_Filter)
-	for _, f := range filters {
-		grouped[f.Type] = append(grouped[f.Type], f)
-	}
-	return grouped
 }

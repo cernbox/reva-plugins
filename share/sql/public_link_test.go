@@ -88,16 +88,30 @@ func TestCreatePublicShareWithPassword(t *testing.T) {
 	userctx := getUserContext("123456")
 	user, _ := appctx.ContextGetUser(userctx)
 	file := getRandomFile(user)
-	grant := getTestPublicLinkGrant("secret")
+	passwordGrant := getTestPublicLinkGrant("secret")
 
-	publicShare, err := mgr.CreatePublicShare(userctx, nil, file, grant, "test description", false, false, "")
+	passwordPublicShare, err := mgr.CreatePublicShare(userctx, nil, file, passwordGrant, "test description", false, false, "")
 	if err != nil {
 		t.Error(err)
 		t.FailNow()
 	}
 
-	if !publicShare.PasswordProtected {
+	unprotectedPublicShare, err := mgr.CreatePublicShare(userctx, nil, file, getTestPublicLinkGrant(""), "test description", false, false, "")
+	if err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
+
+	if !passwordPublicShare.PasswordProtected {
 		t.Error("Expected share to be password protected")
+	}
+
+	if unprotectedPublicShare.PasswordProtected {
+		t.Error("Did not expect unprotected share to be password protected")
+	}
+
+	if passwordPublicShare.Token == "" || unprotectedPublicShare.Token == "" {
+		t.Error("Expected a token to be generated")
 	}
 }
 
@@ -115,20 +129,36 @@ func TestGetPublicShareByToken(t *testing.T) {
 	file := getRandomFile(user)
 	grant := getTestPublicLinkGrant("")
 
-	created, err := mgr.CreatePublicShare(userctx, nil, file, grant, "test description", false, false, "")
+	createdFirst, err := mgr.CreatePublicShare(userctx, nil, file, grant, "test description", false, false, "")
 	if err != nil {
 		t.Error(err)
 		t.FailNow()
 	}
 
-	retrieved, err := mgr.GetPublicShareByToken(userctx, created.Token, nil, false)
+	createdSecond, err := mgr.CreatePublicShare(userctx, nil, file, grant, "test description", false, false, "")
 	if err != nil {
 		t.Error(err)
 		t.FailNow()
 	}
 
-	if retrieved.Token != created.Token {
-		t.Errorf("Expected token %s, got %s", created.Token, retrieved.Token)
+	retrievedFirst, err := mgr.GetPublicShareByToken(userctx, createdFirst.Token, nil, false)
+	if err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
+
+	if retrievedFirst.Token != createdFirst.Token {
+		t.Errorf("Expected token %s, got %s", createdFirst.Token, retrievedFirst.Token)
+	}
+
+	retrievedSecond, err := mgr.GetPublicShareByToken(userctx, createdSecond.Token, nil, false)
+	if err != nil {
+		t.Error(err)
+		t.FailNow()
+	}
+
+	if retrievedSecond.Token != createdSecond.Token {
+		t.Errorf("Expected token %s, got %s", createdSecond.Token, retrievedSecond.Token)
 	}
 }
 

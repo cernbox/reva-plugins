@@ -64,13 +64,21 @@ type ShareAndPublicShareManager interface {
 }
 
 func init() {
-	reva.RegisterPlugin(mgr{})
+	reva.RegisterPlugin(shareMgr{})
+	reva.RegisterPlugin(publicShareMgr{})
 }
 
-func (mgr) RevaPlugin() reva.PluginInfo {
+func (shareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.usershareprovider.drivers.sql",
-		New: New,
+		New: NewShareManager,
+	}
+}
+
+func (publicShareMgr) RevaPlugin() reva.PluginInfo {
+	return reva.PluginInfo{
+		ID:  "grpc.services.publicshareprovider.drivers.gorm",
+		New: NewPublicShareManager,
 	}
 }
 
@@ -85,6 +93,16 @@ type config struct {
 	LinkPasswordHashCost int    `mapstructure:"password_hash_cost"`
 }
 
+// Aliased so we can export the right plugin ID
+type shareMgr struct {
+	mgr
+}
+
+// Aliased so we can export the right plugin ID
+type publicShareMgr struct {
+	mgr
+}
+
 type mgr struct {
 	c  *config
 	db *gorm.DB
@@ -94,7 +112,18 @@ func (c *config) ApplyDefaults() {
 	c.GatewaySvc = sharedconf.GetGatewaySVC(c.GatewaySvc)
 }
 
-// New returns a new share manager.
+func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.Manager, error) {
+	shareMgr, err := New(ctx, m)
+	return shareMgr.(revashare.Manager), err
+}
+
+func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publicshare.Manager, error) {
+	shareMgr, err := New(ctx, m)
+	return shareMgr.(publicshare.Manager), err
+
+}
+
+// New returns a new ShareAndPublicShareManager.
 func New(ctx context.Context, m map[string]interface{}) (ShareAndPublicShareManager, error) {
 	var c config
 	if err := cfg.Decode(m, &c); err != nil {
