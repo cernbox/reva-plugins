@@ -1,4 +1,4 @@
-// Copyright 2018-2024 CERN
+// Copyright 2018-2025 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import (
 	"github.com/cs3org/reva/pkg/appctx"
 	conversions "github.com/cs3org/reva/pkg/cbox/utils"
 	"github.com/cs3org/reva/pkg/errtypes"
+	publicshare "github.com/cs3org/reva/pkg/publicshare"
 	"github.com/cs3org/reva/pkg/rgrpc/status"
 	"github.com/cs3org/reva/pkg/rgrpc/todo/pool"
 	revashare "github.com/cs3org/reva/pkg/share"
@@ -56,6 +57,11 @@ const (
 	projectSpaceAdminGroupsSuffix = "-admins"
 	projectPathPrefix             = "/eos/project/"
 )
+
+type ShareAndPublicShareManager interface {
+	revashare.Manager
+	publicshare.Manager
+}
 
 func init() {
 	reva.RegisterPlugin(mgr{})
@@ -89,7 +95,7 @@ func (c *config) ApplyDefaults() {
 }
 
 // New returns a new share manager.
-func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, error) {
+func New(ctx context.Context, m map[string]interface{}) (ShareAndPublicShareManager, error) {
 	var c config
 	if err := cfg.Decode(m, &c); err != nil {
 		return nil, err

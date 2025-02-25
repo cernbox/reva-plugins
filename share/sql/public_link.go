@@ -1,4 +1,4 @@
-// Copyright 2018-2024 CERN
+// Copyright 2018-2025 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@ package sql
 import (
 	"context"
 	"fmt"
-	"os/user"
 	"strconv"
 	"time"
 
 	model "github.com/cernbox/reva-plugins/share"
+	user "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	link "github.com/cs3org/go-cs3apis/cs3/sharing/link/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva/pkg/appctx"
@@ -46,13 +46,20 @@ import (
 
 func (m *mgr) CreatePublicShare(ctx context.Context, u *user.User, md *provider.ResourceInfo, g *link.Grant, description string, internal bool, notifyUploads bool, notifyUploadsExtraRecipients string) (*link.PublicShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
-
+	if user == nil {
+		return nil, errors.New("no user found in context")
+	}
 	token := utils.RandString(15)
 
-	quicklink, _ := strconv.ParseBool(md.ArbitraryMetadata.Metadata["quicklink"])
-	displayName, ok := md.ArbitraryMetadata.Metadata["name"]
-	if !ok {
-		displayName = token
+	quicklink := false
+	displayName := token
+	if md.ArbitraryMetadata != nil {
+		var ok bool
+		quicklink, _ = strconv.ParseBool(md.ArbitraryMetadata.Metadata["quicklink"])
+		displayName, ok = md.ArbitraryMetadata.Metadata["name"]
+		if !ok {
+			displayName = token
+		}
 	}
 
 	publiclink := &model.PublicLink{
@@ -174,9 +181,11 @@ func (m *mgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.Public
 }
 
 func (m *mgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
-
-	query := m.db.Model(&model.Share{}).
+	query := m.db.Model(&model.PublicLink{}).
 		Where("orphan = ?", false)
+
+	// TODO: should we enforce that some filters are set here?
+	// Otherwise you can just list all public shares...
 
 	// Append filters
 	m.appendLinkFiltersToQuery(query, filters)
