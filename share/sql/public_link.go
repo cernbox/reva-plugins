@@ -53,14 +53,10 @@ func (m *mgr) CreatePublicShare(ctx context.Context, u *user.User, md *provider.
 	token := utils.RandString(15)
 
 	quicklink := false
-	displayName := token
+	var displayName string
 	if md.ArbitraryMetadata != nil {
-		var ok bool
 		quicklink, _ = strconv.ParseBool(md.ArbitraryMetadata.Metadata["quicklink"])
-		displayName, ok = md.ArbitraryMetadata.Metadata["name"]
-		if !ok {
-			displayName = token
-		}
+		displayName = md.ArbitraryMetadata.Metadata["name"]
 	}
 
 	publiclink := &model.PublicLink{

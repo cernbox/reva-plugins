@@ -149,7 +149,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 		Owner:                        conversions.MakeUserID(p.UIDOwner),
 		Creator:                      conversions.MakeUserID(p.UIDInitiator),
 		Token:                        p.Token,
-		DisplayName:                  p.LinkName,
+		DisplayName:                  defaultLinkDisplayName(p.LinkName, p.Quicklink),
 		PasswordProtected:            p.Password != "",
 		Expiration:                   expires,
 		Ctime:                        ts,
@@ -177,4 +177,14 @@ func extractGrantee(sharedWithIsGroup bool, g string, gtype userpb.UserType) *pr
 		}}
 	}
 	return &grantee
+}
+
+func defaultLinkDisplayName(displayName string, quickLink bool) string {
+	if displayName != "" {
+		return displayName
+	} else if quickLink {
+		return "QuickLink"
+	} else {
+		return "Link"
+	}
 }
