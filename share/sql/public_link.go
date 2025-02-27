@@ -39,8 +39,6 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/datatypes"
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	// Provides mysql drivers.
@@ -54,7 +52,7 @@ type publicShareMgr struct {
 
 func (publicShareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
-		ID:  "grpc.services.publicshareprovider.drivers.gorm",
+		ID:  "grpc.services.publicshareprovider.drivers.sql",
 		New: NewPublicShareManager,
 	}
 }
@@ -65,18 +63,7 @@ func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publi
 		return nil, err
 	}
 
-	var db *gorm.DB
-	var err error
-	switch c.Engine {
-	case "sqlite":
-		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{})
-	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	default: // default is mysql
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	}
+	db, err := getDb(c)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +143,8 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	var publiclink *model.PublicLink
 	var err error
 
-	// We need to actually get the link to make sure it is not expired
 	if id := req.Ref.GetId(); id != nil {
-		publiclink, err = m.getLinkByID(ctx, id)
+		publiclink, err = emptyLinkWithId(id.OpaqueId)
 	} else {
 		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken())
 	}
@@ -229,12 +215,15 @@ func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 	return l, nil
 }
 
+// List public shares that match the given filters
 func (m *publicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
 	query := m.db.Model(&model.PublicLink{}).
 		Where("orphan = ?", false)
 
-	// TODO: should we enforce that some filters are set here?
-	// Otherwise you can just list all public shares...
+	if u != nil {
+		uid := conversions.FormatUserID(u.Id)
+		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	}
 
 	// Append filters
 	m.appendLinkFiltersToQuery(query, filters)
@@ -256,14 +245,7 @@ func (m *publicShareMgr) ListPublicShares(ctx context.Context, u *user.User, fil
 }
 
 func (m *publicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference) error {
-	var err error
-	var publiclink *model.PublicLink
-	// We need to actually get the link to make sure it is not expired
-	if id := ref.GetId(); id != nil {
-		publiclink, err = m.getLinkByID(ctx, id)
-	} else {
-		publiclink, err = m.getLinkByToken(ctx, ref.GetToken())
-	}
+	publiclink, err := m.getEmptyPLByRef(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -371,6 +353,34 @@ func isExpired(l model.PublicLink) bool {
 		return time.Now().After(expTime)
 	}
 	return false
+}
+
+// Returns a Public Link containing at least the id field, but not necessarily more
+func (m *publicShareMgr) getEmptyPLByRef(ctx context.Context, ref *link.PublicShareReference) (*model.PublicLink, error) {
+	var err error
+	var publiclink *model.PublicLink
+
+	if id := ref.GetId(); id != nil {
+		publiclink, err = emptyLinkWithId(id.OpaqueId)
+	} else {
+		publiclink, err = m.getLinkByToken(ctx, ref.GetToken())
+	}
+	return publiclink, err
+}
+
+func emptyLinkWithId(id string) (*model.PublicLink, error) {
+	intId, err := strconv.Atoi(id)
+	if err != nil {
+		return nil, err
+	}
+	share := &model.PublicLink{
+		ProtoShare: model.ProtoShare{
+			Model: gorm.Model{
+				ID: uint(intId),
+			},
+		},
+	}
+	return share, nil
 }
 
 func (m *publicShareMgr) appendLinkFiltersToQuery(query *gorm.DB, filters []*link.ListPublicSharesRequest_Filter) {

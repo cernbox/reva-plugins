@@ -20,7 +20,6 @@ package sql
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -33,7 +32,6 @@ import (
 	"github.com/cs3org/reva/pkg/appctx"
 	conversions "github.com/cs3org/reva/pkg/cbox/utils"
 	"github.com/cs3org/reva/pkg/errtypes"
-	publicshare "github.com/cs3org/reva/pkg/publicshare"
 	"github.com/cs3org/reva/pkg/rgrpc/status"
 	"github.com/cs3org/reva/pkg/rgrpc/todo/pool"
 	revashare "github.com/cs3org/reva/pkg/share"
@@ -41,8 +39,6 @@ import (
 	"github.com/cs3org/reva/pkg/utils"
 	"github.com/cs3org/reva/pkg/utils/cfg"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	// Provides mysql drivers.
@@ -51,23 +47,6 @@ import (
 	"google.golang.org/genproto/protobuf/field_mask"
 )
 
-const (
-	projectInstancesPrefix        = "newproject"
-	projectSpaceGroupsPrefix      = "cernbox-project-"
-	projectSpaceAdminGroupsSuffix = "-admins"
-	projectPathPrefix             = "/eos/project/"
-)
-
-type ShareAndPublicShareManager interface {
-	revashare.Manager
-	publicshare.Manager
-}
-
-func init() {
-	reva.RegisterPlugin(shareMgr{})
-	reva.RegisterPlugin(publicShareMgr{})
-}
-
 func (shareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.usershareprovider.drivers.sql",
@@ -75,18 +54,6 @@ func (shareMgr) RevaPlugin() reva.PluginInfo {
 	}
 }
 
-type config struct {
-	Engine               string `mapstructure:"engine"` // mysql | sqlite
-	DBUsername           string `mapstructure:"db_username"`
-	DBPassword           string `mapstructure:"db_password"`
-	DBHost               string `mapstructure:"db_host"`
-	DBPort               int    `mapstructure:"db_port"`
-	DBName               string `mapstructure:"db_name"`
-	GatewaySvc           string `mapstructure:"gatewaysvc"`
-	LinkPasswordHashCost int    `mapstructure:"password_hash_cost"`
-}
-
-// Aliased so we can export the right plugin ID
 type shareMgr struct {
 	c  *config
 	db *gorm.DB
@@ -102,18 +69,7 @@ func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.M
 		return nil, err
 	}
 
-	var db *gorm.DB
-	var err error
-	switch c.Engine {
-	case "sqlite":
-		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{})
-	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	default: // default is mysql
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	}
+	db, err := getDb(c)
 	if err != nil {
 		return nil, err
 	}
@@ -169,6 +125,14 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 		ShareWith:         shareWith,
 		SharedWithIsGroup: g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP,
 	}
+	share.UIDOwner = conversions.FormatUserID(md.Owner)
+	share.UIDInitiator = conversions.FormatUserID(user.Id)
+	share.InitialPath = md.Path
+	share.ItemType = model.ItemType(conversions.ResourceTypeToItem(md.Type))
+	share.Inode = md.Id.OpaqueId
+	share.Instance = md.Id.StorageId
+	share.Permissions = uint8(conversions.SharePermToInt(g.Permissions.Permissions))
+	share.Orphan = false
 
 	res := m.db.Save(&share)
 	if res.Error != nil {
@@ -347,11 +311,13 @@ func (m *shareMgr) isProjectAdmin(u *userpb.User, path string) bool {
 }
 
 func (m *shareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
-
 	query := m.db.Model(&model.Share{}).
-		Where("uid_owner = ? or uid_initiator = ?", uid, uid).
 		Where("orphan = ?", false)
+
+	if u, ok := appctx.ContextGetUser(ctx); ok {
+		uid := conversions.FormatUserID(u.Id)
+		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	}
 
 	// Append filters
 	m.appendShareFiltersToQuery(query, filters)
