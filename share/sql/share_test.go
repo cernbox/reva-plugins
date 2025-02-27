@@ -30,7 +30,7 @@ func setupSuiteShares(tb testing.TB) (revashare.Manager, error, func(tb testing.
 		"engine":  "sqlite",
 		"db_name": dbName,
 	}
-	mgr, err := New(ctx, cfg)
+	mgr, err := NewShareManager(ctx, cfg)
 	if err != nil {
 		return nil, err, nil
 	}

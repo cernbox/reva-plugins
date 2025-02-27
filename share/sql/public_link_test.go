@@ -22,7 +22,7 @@ func setupSuiteLinks(tb testing.TB) (publicshare.Manager, error, func(tb testing
 		"engine":  "sqlite",
 		"db_name": dbName,
 	}
-	mgr, err := New(ctx, cfg)
+	mgr, err := NewPublicShareManager(ctx, cfg)
 	if err != nil {
 		os.Remove(dbName)
 		return nil, err, nil
