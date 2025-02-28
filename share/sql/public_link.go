@@ -157,7 +157,7 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	if id := req.Ref.GetId(); id != nil {
 		publiclink, err = emptyLinkWithId(id.OpaqueId)
 	} else {
-		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken())
+		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), true)
 	}
 	if err != nil {
 		return nil, err
@@ -222,9 +222,9 @@ func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 	var err error
 	switch {
 	case ref.GetId() != nil:
-		ln, err = m.getLinkByID(ctx, ref.GetId())
+		ln, err = m.getLinkByID(ctx, ref.GetId(), true)
 	case ref.GetToken() != "":
-		ln, err = m.getLinkByToken(ctx, ref.GetToken())
+		ln, err = m.getLinkByToken(ctx, ref.GetToken(), true)
 	default:
 		err = errtypes.NotFound(ref.String())
 	}
@@ -244,26 +244,15 @@ func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 
 // List public shares that match the given filters
 func (m *publicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
-	query := m.db.Model(&model.PublicLink{}).
-		Where("orphan = ?", false)
-
-	if u != nil {
-		uid := conversions.FormatUserID(u.Id)
-		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	links, err := m.ListPublicLinks(ctx, u, filters, md, sign)
+	if err != nil {
+		return nil, err
 	}
 
-	// Append filters
-	m.appendLinkFiltersToQuery(query, filters)
-
-	var links []model.PublicLink
 	var cs3links []*link.PublicShare
-	res := query.Find(&links)
-	if res.Error != nil {
-		return nil, res.Error
-	}
 
 	for _, l := range links {
-		if !isExpired(l) {
+		if !isExpired(l) && !l.Orphan {
 			cs3links = append(cs3links, l.AsCS3PublicShare())
 		}
 	}
@@ -284,7 +273,7 @@ func (m *publicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, re
 // Get a PublicShare identified by token. This function returns `errtypes.InvalidCredentials` if `auth` does not contain
 // a valid password or signature in case the PublicShare is password-protected
 func (m *publicShareMgr) GetPublicShareByToken(ctx context.Context, token string, auth *link.PublicShareAuthentication, sign bool) (*link.PublicShare, error) {
-	publiclink, err := m.getLinkByToken(ctx, token)
+	publiclink, err := m.getLinkByToken(ctx, token, true)
 	if err != nil {
 		return nil, err
 	}
@@ -308,12 +297,58 @@ func (m *publicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 	return cs3link, nil
 }
 
+// Exported functions below are not part of the CS3-defined API, but are used by cernboxcop
+
+// List public links in the CERN-specific format. Used in cernboxcop.
+// Note: this method does not filter for orphaned or expired links!
+func (m *publicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]model.PublicLink, error) {
+	query := m.db.Model(&model.PublicLink{})
+
+	if u != nil {
+		uid := conversions.FormatUserID(u.Id)
+		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	}
+
+	// Append filters
+	m.appendLinkFiltersToQuery(query, filters)
+
+	var links []model.PublicLink
+	res := query.Find(&links)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+
+	return links, nil
+}
+
+func (m *publicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *link.PublicShareReference, filter bool) (*model.PublicLink, error) {
+	var ln *model.PublicLink
+	var err error
+	switch {
+	case ref.GetId() != nil:
+		ln, err = m.getLinkByID(ctx, ref.GetId(), filter)
+	case ref.GetToken() != "":
+		ln, err = m.getLinkByToken(ctx, ref.GetToken(), filter)
+	default:
+		err = errtypes.NotFound(ref.String())
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return ln, nil
+}
+
 // Get Link by ID. Does not return orphans or expired links.
-func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId) (*model.PublicLink, error) {
+func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId, filter bool) (*model.PublicLink, error) {
 	var link model.PublicLink
 	res := m.db.Where("id = ?", id.OpaqueId).First(&link)
 
-	if res.RowsAffected == 0 || link.Orphan || isExpired(link) {
+	if res.RowsAffected == 0 {
+		return nil, errtypes.NotFound(id.OpaqueId)
+	}
+
+	if filter && (link.Orphan || isExpired(link)) {
 		return nil, errtypes.NotFound(id.OpaqueId)
 	}
 
@@ -321,7 +356,7 @@ func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId
 }
 
 // Get Link by token. Does not return orphans or expired links.
-func (m *publicShareMgr) getLinkByToken(ctx context.Context, token string) (*model.PublicLink, error) {
+func (m *publicShareMgr) getLinkByToken(ctx context.Context, token string, filter bool) (*model.PublicLink, error) {
 	if token == "" {
 		return nil, errors.New("no token provided to getLinkByToken")
 	}
@@ -331,7 +366,11 @@ func (m *publicShareMgr) getLinkByToken(ctx context.Context, token string) (*mod
 		Where("token = ?", token).
 		First(&link)
 
-	if res.RowsAffected == 0 || link.Orphan || isExpired(link) {
+	if res.RowsAffected == 0 {
+		return nil, errtypes.NotFound(token)
+	}
+
+	if filter && (link.Orphan || isExpired(link)) {
 		return nil, errtypes.NotFound(token)
 	}
 
@@ -390,7 +429,7 @@ func (m *publicShareMgr) getEmptyPLByRef(ctx context.Context, ref *link.PublicSh
 	if id := ref.GetId(); id != nil {
 		publiclink, err = emptyLinkWithId(id.OpaqueId)
 	} else {
-		publiclink, err = m.getLinkByToken(ctx, ref.GetToken())
+		publiclink, err = m.getLinkByToken(ctx, ref.GetToken(), true)
 	}
 	return publiclink, err
 }
