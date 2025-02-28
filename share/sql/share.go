@@ -38,13 +38,13 @@ import (
 	"github.com/cs3org/reva/pkg/sharedconf"
 	"github.com/cs3org/reva/pkg/utils"
 	"github.com/cs3org/reva/pkg/utils/cfg"
+	"google.golang.org/genproto/protobuf/field_mask"
 
 	"gorm.io/gorm"
 
 	// Provides mysql drivers.
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pkg/errors"
-	"google.golang.org/genproto/protobuf/field_mask"
 )
 
 func (shareMgr) RevaPlugin() reva.PluginInfo {
@@ -154,83 +154,6 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 	return share.AsCS3Share(granteeType), nil
 }
 
-// Get Share by ID. Does not return orphans.
-func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId) (*model.Share, error) {
-	var share model.Share
-	res := m.db.Where("id = ?", id.OpaqueId).First(&share)
-
-	if res.RowsAffected == 0 || share.Orphan {
-		return nil, errtypes.NotFound(id.OpaqueId)
-	}
-
-	return &share, nil
-}
-
-// Get Share by Key. Does not return orphans.
-func (m *shareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool) (*model.Share, error) {
-	owner := conversions.FormatUserID(key.Owner)
-
-	var share model.Share
-	_, shareWith := conversions.FormatGrantee(key.Grantee)
-
-	query := m.db.Model(&share).
-		Where("orphan = ?", false).
-		Where("uid_owner = ?", owner).
-		Where("instance = ?", key.ResourceId.StorageId).
-		Where("inode = ?", key.ResourceId.OpaqueId).
-		Where("shared_with_is_group = ?", key.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP).
-		Where("share_with = ?", strings.ToLower(shareWith))
-
-	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
-	// In case the user is not the owner (i.e. in the case of projects)
-	if checkOwner && owner != uid {
-		query = query.Where("uid_initiator = ?", uid)
-	}
-
-	res := query.First(&share)
-
-	if res.RowsAffected == 0 {
-		return nil, errtypes.NotFound(key.String())
-	}
-
-	return &share, nil
-}
-
-func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
-	var s *model.Share
-	var err error
-	switch {
-	case ref.GetId() != nil:
-		s, err = m.getShareByID(ctx, ref.GetId())
-	case ref.GetKey() != nil:
-		s, err = m.getShareByKey(ctx, ref.GetKey(), false)
-	default:
-		return nil, errtypes.NotFound(ref.String())
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	user := appctx.ContextMustGetUser(ctx)
-	if s.UIDOwner == user.Id.OpaqueId && s.UIDInitiator == user.Id.OpaqueId {
-		return s, nil
-	}
-
-	path, err := m.getPath(ctx, &provider.ResourceId{
-		StorageId: s.Instance,
-		OpaqueId:  s.Inode,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if m.isProjectAdmin(user, path) {
-		return s, nil
-	}
-
-	return nil, errtypes.NotFound(ref.String())
-}
-
 func (m *shareMgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
 	share, err := m.getShare(ctx, ref)
 	if err != nil {
@@ -277,48 +200,6 @@ func (m *shareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 	}
 
 	return m.GetShare(ctx, ref)
-}
-
-func (m *shareMgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, error) {
-	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
-	if err != nil {
-		return "", err
-	}
-
-	res, err := client.GetPath(ctx, &provider.GetPathRequest{
-		ResourceId: resID,
-	})
-
-	if err != nil {
-		return "", err
-	}
-
-	if res.Status.Code == rpc.Code_CODE_OK {
-		return res.GetPath(), nil
-	} else if res.Status.Code == rpc.Code_CODE_NOT_FOUND {
-		return "", errtypes.NotFound(resID.OpaqueId)
-	}
-	return "", errors.New(res.Status.Code.String() + ": " + res.Status.Message)
-}
-
-func (m *shareMgr) isProjectAdmin(u *userpb.User, path string) bool {
-	if strings.HasPrefix(path, projectPathPrefix) {
-		// The path will look like /eos/project/c/cernbox, we need to extract the project name
-		parts := strings.SplitN(path, "/", 6)
-		if len(parts) < 5 {
-			return false
-		}
-
-		adminGroup := projectSpaceGroupsPrefix + parts[4] + projectSpaceAdminGroupsSuffix
-		for _, g := range u.Groups {
-			if g == adminGroup {
-				// User belongs to the admin group, list all shares for the resource
-
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (m *shareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
@@ -399,74 +280,6 @@ func (m *shareMgr) ListReceivedShares(ctx context.Context, filters []*collaborat
 	return receivedShares, nil
 }
 
-func (m *shareMgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
-	var shareState model.ShareState
-	query := m.db.Model(&shareState).
-		Where("share_id = ?", share.Id).
-		Where("user = ?", user.Username)
-
-	res := query.First(&shareState)
-
-	if res.RowsAffected == 0 {
-		// If no share state has been created yet, we create it now using these defaults
-		shareState = model.ShareState{
-			Share:  *share,
-			Hidden: false,
-			Synced: false,
-			User:   user.Username,
-		}
-	}
-
-	return &shareState, nil
-}
-
-func emptyShareWithId(id string) (*model.Share, error) {
-	intId, err := strconv.Atoi(id)
-	if err != nil {
-		return nil, err
-	}
-	share := &model.Share{
-		ProtoShare: model.ProtoShare{
-			BaseModel: model.BaseModel{
-				Id: uint(intId),
-			},
-		},
-	}
-	return share, nil
-}
-
-func (m *shareMgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
-	user := appctx.ContextMustGetUser(ctx)
-	share, err := m.getShareByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	shareState, err := m.getShareState(ctx, share, user)
-	if err != nil {
-		return nil, err
-	}
-
-	receivedShare := share.AsCS3ReceivedShare(shareState, gtype)
-	return receivedShare, nil
-}
-
-func (m *shareMgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
-	user := appctx.ContextMustGetUser(ctx)
-	share, err := m.getShareByKey(ctx, key, false)
-	if err != nil {
-		return nil, err
-	}
-
-	shareState, err := m.getShareState(ctx, share, user)
-	if err != nil {
-		return nil, err
-	}
-
-	receivedShare := share.AsCS3ReceivedShare(shareState, gtype)
-	return receivedShare, nil
-}
-
 func (m *shareMgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.ReceivedShare, error) {
 	var s *collaboration.ReceivedShare
 	var err error
@@ -538,6 +351,193 @@ func (m *shareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collabora
 	return rs, nil
 }
 
+func (m *shareMgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, error) {
+	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
+	if err != nil {
+		return "", err
+	}
+
+	res, err := client.GetPath(ctx, &provider.GetPathRequest{
+		ResourceId: resID,
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if res.Status.Code == rpc.Code_CODE_OK {
+		return res.GetPath(), nil
+	} else if res.Status.Code == rpc.Code_CODE_NOT_FOUND {
+		return "", errtypes.NotFound(resID.OpaqueId)
+	}
+	return "", errors.New(res.Status.Code.String() + ": " + res.Status.Message)
+}
+
+func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
+	var s *model.Share
+	var err error
+	switch {
+	case ref.GetId() != nil:
+		s, err = m.getShareByID(ctx, ref.GetId())
+	case ref.GetKey() != nil:
+		s, err = m.getShareByKey(ctx, ref.GetKey(), false)
+	default:
+		return nil, errtypes.NotFound(ref.String())
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	user := appctx.ContextMustGetUser(ctx)
+	if s.UIDOwner == user.Id.OpaqueId && s.UIDInitiator == user.Id.OpaqueId {
+		return s, nil
+	}
+
+	path, err := m.getPath(ctx, &provider.ResourceId{
+		StorageId: s.Instance,
+		OpaqueId:  s.Inode,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if m.isProjectAdmin(user, path) {
+		return s, nil
+	}
+
+	return nil, errtypes.NotFound(ref.String())
+}
+
+// Get Share by ID. Does not return orphans.
+func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId) (*model.Share, error) {
+	var share model.Share
+	res := m.db.First(&share, id.OpaqueId)
+
+	if res.RowsAffected == 0 || share.Orphan {
+		return nil, errtypes.NotFound(id.OpaqueId)
+	}
+
+	return &share, nil
+}
+
+// Get Share by Key. Does not return orphans.
+func (m *shareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool) (*model.Share, error) {
+	owner := conversions.FormatUserID(key.Owner)
+
+	var share model.Share
+	_, shareWith := conversions.FormatGrantee(key.Grantee)
+
+	query := m.db.Model(&share).
+		Where("orphan = ?", false).
+		Where("uid_owner = ?", owner).
+		Where("instance = ?", key.ResourceId.StorageId).
+		Where("inode = ?", key.ResourceId.OpaqueId).
+		Where("shared_with_is_group = ?", key.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP).
+		Where("share_with = ?", strings.ToLower(shareWith))
+
+	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
+	// In case the user is not the owner (i.e. in the case of projects)
+	if checkOwner && owner != uid {
+		query = query.Where("uid_initiator = ?", uid)
+	}
+
+	res := query.First(&share)
+
+	if res.RowsAffected == 0 {
+		return nil, errtypes.NotFound(key.String())
+	}
+
+	return &share, nil
+}
+
+func (m *shareMgr) isProjectAdmin(u *userpb.User, path string) bool {
+	if strings.HasPrefix(path, projectPathPrefix) {
+		// The path will look like /eos/project/c/cernbox, we need to extract the project name
+		parts := strings.SplitN(path, "/", 6)
+		if len(parts) < 5 {
+			return false
+		}
+
+		adminGroup := projectSpaceGroupsPrefix + parts[4] + projectSpaceAdminGroupsSuffix
+		for _, g := range u.Groups {
+			if g == adminGroup {
+				// User belongs to the admin group, list all shares for the resource
+
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m *shareMgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
+	var shareState model.ShareState
+	query := m.db.Model(&shareState).
+		Where("share_id = ?", share.ID).
+		Where("user = ?", user.Username)
+
+	res := query.First(&shareState)
+
+	if res.RowsAffected == 0 {
+		// If no share state has been created yet, we create it now using these defaults
+		shareState = model.ShareState{
+			Share:  *share,
+			Hidden: false,
+			Synced: false,
+			User:   user.Username,
+		}
+	}
+
+	return &shareState, nil
+}
+
+func emptyShareWithId(id string) (*model.Share, error) {
+	intId, err := strconv.Atoi(id)
+	if err != nil {
+		return nil, err
+	}
+	share := &model.Share{
+		ProtoShare: model.ProtoShare{
+			Model: gorm.Model{
+				ID: uint(intId),
+			},
+		},
+	}
+	return share, nil
+}
+
+func (m *shareMgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
+	user := appctx.ContextMustGetUser(ctx)
+	share, err := m.getShareByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	shareState, err := m.getShareState(ctx, share, user)
+	if err != nil {
+		return nil, err
+	}
+
+	receivedShare := share.AsCS3ReceivedShare(shareState, gtype)
+	return receivedShare, nil
+}
+
+func (m *shareMgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
+	user := appctx.ContextMustGetUser(ctx)
+	share, err := m.getShareByKey(ctx, key, false)
+	if err != nil {
+		return nil, err
+	}
+
+	shareState, err := m.getShareState(ctx, share, user)
+	if err != nil {
+		return nil, err
+	}
+
+	receivedShare := share.AsCS3ReceivedShare(shareState, gtype)
+	return receivedShare, nil
+}
+
 func (m *shareMgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
 	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
 	if err != nil {
@@ -588,8 +588,6 @@ func (m *shareMgr) appendShareFiltersToQuery(query *gorm.DB, filters []*collabor
 				}
 			}
 			query = query.Where(innerQuery)
-		default:
-			break
 		}
 	}
 }
