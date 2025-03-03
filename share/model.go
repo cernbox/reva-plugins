@@ -30,15 +30,18 @@ func (i ItemType) String() string {
 	return string(i)
 }
 
+// ProtoShare contains fields that are shared between PublicLinks and Shares.
+// Unfortunately, because these are shared, we cannot name our indexes
+// because then two indexes with the same name would be created
 type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
 	gorm.Model
 	UIDOwner     string   `gorm:"size:64"`
 	UIDInitiator string   `gorm:"size:64"`
-	ItemType     ItemType `gorm:"size:16;index:i_item_type"` // file | folder | reference | symlink
+	ItemType     ItemType `gorm:"size:16;index:"` // file | folder | reference | symlink
 	InitialPath  string
-	Inode        string `gorm:"size:32;index:i_inode"`
-	Instance     string `gorm:"size:32;index:i_instance"`
+	Inode        string `gorm:"size:32;index:"`
+	Instance     string `gorm:"size:32;index:"`
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
@@ -122,10 +125,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 	ts := &typespb.Timestamp{
 		Seconds: uint64(p.CreatedAt.Unix()),
 	}
-	pwd := false
-	if p.Password != "" {
-		pwd = true
-	}
+
 	var expires *typespb.Timestamp
 	if p.Expiration.Valid {
 		exp, err := p.Expiration.Value()
@@ -149,8 +149,8 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 		Owner:                        conversions.MakeUserID(p.UIDOwner),
 		Creator:                      conversions.MakeUserID(p.UIDInitiator),
 		Token:                        p.Token,
-		DisplayName:                  p.LinkName,
-		PasswordProtected:            pwd,
+		DisplayName:                  defaultLinkDisplayName(p.LinkName, p.Quicklink),
+		PasswordProtected:            p.Password != "",
 		Expiration:                   expires,
 		Ctime:                        ts,
 		Mtime:                        ts,
@@ -177,4 +177,14 @@ func extractGrantee(sharedWithIsGroup bool, g string, gtype userpb.UserType) *pr
 		}}
 	}
 	return &grantee
+}
+
+func defaultLinkDisplayName(displayName string, quickLink bool) string {
+	if displayName != "" {
+		return displayName
+	} else if quickLink {
+		return "QuickLink"
+	} else {
+		return "Link"
+	}
 }

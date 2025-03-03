@@ -23,14 +23,14 @@ import (
 // ===========================
 
 // You can use testing.T, if you want to test the code without benchmarking
-func setupSuite(tb testing.TB) (revashare.Manager, error, func(tb testing.TB)) {
+func setupSuiteShares(tb testing.TB) (revashare.Manager, error, func(tb testing.TB)) {
 	ctx := context.Background()
 	dbName := "test_db.sqlite"
 	cfg := map[string]interface{}{
 		"engine":  "sqlite",
 		"db_name": dbName,
 	}
-	mgr, err := New(ctx, cfg)
+	mgr, err := NewShareManager(ctx, cfg)
 	if err != nil {
 		return nil, err, nil
 	}
@@ -112,7 +112,7 @@ func getGroupShareGrant(shareeId, resourcetype string) *collaboration.ShareGrant
 // ===========================
 
 func TestGetShareById(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -146,7 +146,7 @@ func TestGetShareById(t *testing.T) {
 }
 
 func TestGetShareByKey(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -186,7 +186,7 @@ func TestGetShareByKey(t *testing.T) {
 }
 
 func TestGetReceivedShareById(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -220,7 +220,7 @@ func TestGetReceivedShareById(t *testing.T) {
 }
 
 func TestGetReceivedShareByKey(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -261,7 +261,7 @@ func TestGetReceivedShareByKey(t *testing.T) {
 }
 
 func TestDoNotCreateSameShareTwice(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -301,7 +301,7 @@ func TestDoNotCreateSameShareTwice(t *testing.T) {
 }
 
 func TestListShares(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -336,7 +336,7 @@ func TestListShares(t *testing.T) {
 }
 
 func TestListReceivedShares(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -372,7 +372,7 @@ func TestListReceivedShares(t *testing.T) {
 }
 
 func TestListSharesWithFilters(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -418,7 +418,7 @@ func TestListSharesWithFilters(t *testing.T) {
 }
 
 func TestDeleteShare(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -457,7 +457,7 @@ func TestDeleteShare(t *testing.T) {
 }
 
 func TestUpdateShare(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -496,7 +496,7 @@ func TestUpdateShare(t *testing.T) {
 }
 
 func TestUpdateReceivedShare(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -551,7 +551,7 @@ func TestUpdateReceivedShare(t *testing.T) {
 }
 
 func TestShareWithGroup(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -585,7 +585,7 @@ func TestShareWithGroup(t *testing.T) {
 }
 
 func TestListSharesWithGranteeTypeFilter(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {
@@ -624,7 +624,7 @@ func TestListSharesWithGranteeTypeFilter(t *testing.T) {
 }
 
 func TestListSharesWithMultipleFilters(t *testing.T) {
-	mgr, err, teardown := setupSuite(t)
+	mgr, err, teardown := setupSuiteShares(t)
 	defer teardown(t)
 
 	if err != nil {

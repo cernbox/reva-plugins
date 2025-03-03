@@ -1,4 +1,4 @@
-// Copyright 2018-2024 CERN
+// Copyright 2018-2025 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ package sql
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -40,8 +39,6 @@ import (
 	"github.com/cs3org/reva/pkg/utils"
 	"github.com/cs3org/reva/pkg/utils/cfg"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	// Provides mysql drivers.
@@ -50,35 +47,14 @@ import (
 	"google.golang.org/genproto/protobuf/field_mask"
 )
 
-const (
-	projectInstancesPrefix        = "newproject"
-	projectSpaceGroupsPrefix      = "cernbox-project-"
-	projectSpaceAdminGroupsSuffix = "-admins"
-	projectPathPrefix             = "/eos/project/"
-)
-
-func init() {
-	reva.RegisterPlugin(mgr{})
-}
-
-func (mgr) RevaPlugin() reva.PluginInfo {
+func (shareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.usershareprovider.drivers.sql",
-		New: New,
+		New: NewShareManager,
 	}
 }
 
-type config struct {
-	Engine     string `mapstructure:"engine"` // mysql | sqlite
-	DBUsername string `mapstructure:"db_username"`
-	DBPassword string `mapstructure:"db_password"`
-	DBHost     string `mapstructure:"db_host"`
-	DBPort     int    `mapstructure:"db_port"`
-	DBName     string `mapstructure:"db_name"`
-	GatewaySvc string `mapstructure:"gatewaysvc"`
-}
-
-type mgr struct {
+type shareMgr struct {
 	c  *config
 	db *gorm.DB
 }
@@ -87,43 +63,32 @@ func (c *config) ApplyDefaults() {
 	c.GatewaySvc = sharedconf.GetGatewaySVC(c.GatewaySvc)
 }
 
-// New returns a new share manager.
-func New(ctx context.Context, m map[string]interface{}) (revashare.Manager, error) {
+func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.Manager, error) {
 	var c config
 	if err := cfg.Decode(m, &c); err != nil {
 		return nil, err
 	}
 
-	var db *gorm.DB
-	var err error
-	switch c.Engine {
-	case "sqlite":
-		db, err = gorm.Open(sqlite.Open(c.DBName), &gorm.Config{})
-	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	default: // default is mysql
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
-		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	}
+	db, err := getDb(c)
 	if err != nil {
 		return nil, err
 	}
 
 	// Migrate schemas
-	err = db.AutoMigrate(&model.Share{}, &model.PublicLink{}, &model.ShareState{})
+	err = db.AutoMigrate(&model.Share{}, &model.ShareState{})
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &mgr{
+	mgr := &shareMgr{
 		c:  &c,
 		db: db,
-	}, nil
+	}
+	return mgr, nil
 }
 
-func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
+func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
 	user := appctx.ContextMustGetUser(ctx)
 
 	// do not allow share to myself or the owner if share is for a user
@@ -139,7 +104,7 @@ func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collabora
 		ResourceId: md.Id,
 		Grantee:    g.Grantee,
 	}
-	_, err := m.getByKey(ctx, key, true)
+	_, err := m.getShareByKey(ctx, key, true)
 	// share already exists
 	// TODO stricter error checking
 	if err == nil {
@@ -179,7 +144,7 @@ func (m *mgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collabora
 }
 
 // Get Share by ID. Does not return orphans.
-func (m *mgr) getByID(ctx context.Context, id *collaboration.ShareId) (*model.Share, error) {
+func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId) (*model.Share, error) {
 	var share model.Share
 	res := m.db.First(&share, id.OpaqueId)
 
@@ -191,7 +156,7 @@ func (m *mgr) getByID(ctx context.Context, id *collaboration.ShareId) (*model.Sh
 }
 
 // Get Share by Key. Does not return orphans.
-func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool) (*model.Share, error) {
+func (m *shareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool) (*model.Share, error) {
 	owner := conversions.FormatUserID(key.Owner)
 
 	var share model.Share
@@ -220,14 +185,14 @@ func (m *mgr) getByKey(ctx context.Context, key *collaboration.ShareKey, checkOw
 	return &share, nil
 }
 
-func (m *mgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
+func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
 	var s *model.Share
 	var err error
 	switch {
 	case ref.GetId() != nil:
-		s, err = m.getByID(ctx, ref.GetId())
+		s, err = m.getShareByID(ctx, ref.GetId())
 	case ref.GetKey() != nil:
-		s, err = m.getByKey(ctx, ref.GetKey(), false)
+		s, err = m.getShareByKey(ctx, ref.GetKey(), false)
 	default:
 		return nil, errtypes.NotFound(ref.String())
 	}
@@ -255,7 +220,7 @@ func (m *mgr) getShare(ctx context.Context, ref *collaboration.ShareReference) (
 	return nil, errtypes.NotFound(ref.String())
 }
 
-func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
+func (m *shareMgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
 	share, err := m.getShare(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -267,7 +232,7 @@ func (m *mgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (
 	return cs3share, nil
 }
 
-func (m *mgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) error {
+func (m *shareMgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) error {
 	var share *model.Share
 	var err error
 	if id := ref.GetId(); id != nil {
@@ -282,7 +247,7 @@ func (m *mgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) er
 	return res.Error
 }
 
-func (m *mgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, p *collaboration.SharePermissions) (*collaboration.Share, error) {
+func (m *shareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, p *collaboration.SharePermissions) (*collaboration.Share, error) {
 	var share *model.Share
 	var err error
 	if id := ref.GetId(); id != nil {
@@ -303,7 +268,7 @@ func (m *mgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference
 	return m.GetShare(ctx, ref)
 }
 
-func (m *mgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, error) {
+func (m *shareMgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, error) {
 	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
 	if err != nil {
 		return "", err
@@ -325,7 +290,7 @@ func (m *mgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, 
 	return "", errors.New(res.Status.Code.String() + ": " + res.Status.Message)
 }
 
-func (m *mgr) isProjectAdmin(u *userpb.User, path string) bool {
+func (m *shareMgr) isProjectAdmin(u *userpb.User, path string) bool {
 	if strings.HasPrefix(path, projectPathPrefix) {
 		// The path will look like /eos/project/c/cernbox, we need to extract the project name
 		parts := strings.SplitN(path, "/", 6)
@@ -345,15 +310,17 @@ func (m *mgr) isProjectAdmin(u *userpb.User, path string) bool {
 	return false
 }
 
-func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	uid := conversions.FormatUserID(appctx.ContextMustGetUser(ctx).Id)
-
+func (m *shareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
 	query := m.db.Model(&model.Share{}).
-		Where("uid_owner = ? or uid_initiator = ?", uid, uid).
 		Where("orphan = ?", false)
 
+	if u, ok := appctx.ContextGetUser(ctx); ok {
+		uid := conversions.FormatUserID(u.Id)
+		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	}
+
 	// Append filters
-	m.appendFiltersToQuery(query, filters)
+	m.appendShareFiltersToQuery(query, filters)
 
 	var shares []model.Share
 	var cs3shares []*collaboration.Share
@@ -372,7 +339,7 @@ func (m *mgr) ListShares(ctx context.Context, filters []*collaboration.Filter) (
 }
 
 // we list the shares that are targeted to the user in context or to the user groups.
-func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.ReceivedShare, error) {
+func (m *shareMgr) ListReceivedShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 
 	// We need to do this to parse the result
@@ -398,7 +365,7 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 	query = query.Where(innerQuery)
 
 	// Append filters
-	m.appendFiltersToQuery(query, filters)
+	m.appendShareFiltersToQuery(query, filters)
 
 	// Get the shares + states
 	res := query.Find(&results)
@@ -420,7 +387,7 @@ func (m *mgr) ListReceivedShares(ctx context.Context, filters []*collaboration.F
 	return receivedShares, nil
 }
 
-func (m *mgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
+func (m *shareMgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
 	var shareState model.ShareState
 	query := m.db.Model(&shareState).
 		Where("share_id = ?", share.ID).
@@ -456,9 +423,9 @@ func emptyShareWithId(id string) (*model.Share, error) {
 	return share, nil
 }
 
-func (m *mgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
+func (m *shareMgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
-	share, err := m.getByID(ctx, id)
+	share, err := m.getShareByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -472,9 +439,9 @@ func (m *mgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gt
 	return receivedShare, nil
 }
 
-func (m *mgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
+func (m *shareMgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
-	share, err := m.getByKey(ctx, key, false)
+	share, err := m.getShareByKey(ctx, key, false)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +455,7 @@ func (m *mgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey,
 	return receivedShare, nil
 }
 
-func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.ReceivedShare, error) {
+func (m *shareMgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.ReceivedShare, error) {
 	var s *collaboration.ReceivedShare
 	var err error
 	switch {
@@ -512,7 +479,7 @@ func (m *mgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareRefe
 	return s, nil
 }
 
-func (m *mgr) UpdateReceivedShare(ctx context.Context, recvShare *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
+func (m *shareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
 
 	user := appctx.ContextMustGetUser(ctx)
 
@@ -559,7 +526,7 @@ func (m *mgr) UpdateReceivedShare(ctx context.Context, recvShare *collaboration.
 	return rs, nil
 }
 
-func (m *mgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
+func (m *shareMgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
 	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
 	if err != nil {
 		return userpb.UserType_USER_TYPE_PRIMARY, err
@@ -578,7 +545,7 @@ func (m *mgr) getUserType(ctx context.Context, username string) (userpb.UserType
 	return userRes.GetUser().Id.Type, nil
 }
 
-func (m *mgr) appendFiltersToQuery(query *gorm.DB, filters []*collaboration.Filter) {
+func (m *shareMgr) appendShareFiltersToQuery(query *gorm.DB, filters []*collaboration.Filter) {
 	// We want to chain filters of different types with AND
 	// and filters of the same type with OR
 	// Therefore, we group them by type
