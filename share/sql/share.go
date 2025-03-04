@@ -88,10 +88,6 @@ func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.M
 	return mgr, nil
 }
 
-func (m *mgr) getDb() *gorm.DB {
-	return m.db
-}
-
 func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
 	user := appctx.ContextMustGetUser(ctx)
 
@@ -105,7 +101,14 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 	// check if share already exists.
 	key := &collaboration.ShareKey{
 		Owner:      md.Owner,
+		ResourceId: md.Id,
 		Grantee:    g.Grantee,
+	}
+	_, err := m.getShareByKey(ctx, key, true)
+	// share already exists
+	if err == nil {
+		return nil, errors.New(errtypes.AlreadyExists(key.String()).Error())
+	}
 
 	var shareWith string
 	if g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_USER {

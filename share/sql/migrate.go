@@ -31,89 +31,6 @@ type ShareOrLink struct {
 	Link    *model.PublicLink
 }
 
-func RunMigration(username, password, host, name, gatewaysvc, token string, port int) {
-	config := map[string]interface{}{
-		"engine":      "mysql",
-		"db_username": username,
-		"db_password": password,
-		"db_host":     host,
-		"db_port":     port,
-		"db_name":     name,
-		"gatewaysvc":  gatewaysvc,
-		"dry_run":     false,
-	}
-	tokenlessCtx, cancel := context.WithCancel(context.Background())
-	ctx := appctx.ContextSetToken(tokenlessCtx, token)
-	ctx = metadata.AppendToOutgoingContext(ctx, appctx.TokenHeader, token)
-	defer cancel()
-
-	shareManager, err := NewShareManager(ctx, config)
-	if err != nil {
-		fmt.Println("Failed to create shareManager: " + err.Error())
-		os.Exit(1)
-	}
-	sharemgr := shareManager.(*shareMgr)
-	oldDb, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", username, password, host, port, name))
-	if err != nil {
-		fmt.Println("Failed to create db: " + err.Error())
-		os.Exit(1)
-	}
-	migrator := Migrator{
-		OldDb:    oldDb,
-		NewDb:    sharemgr.db,
-		ShareMgr: sharemgr,
-	}
-
-	ch := make(chan *ShareOrLink, 100)
-	go getAllShares(ctx, migrator, ch)
-	for share := range ch {
-		// TODO error handling
-		if share.IsShare {
-			fmt.Printf("Creating share %d\n", share.Share.ID)
-			migrator.NewDb.Create(&share.Share)
-		} else {
-			fmt.Printf("Creating share %d\n", share.Link.ID)
-			migrator.NewDb.Create(&share.Link)
-		}
-	}
-
-}
-
-func getAllShares(ctx context.Context, migrator Migrator, ch chan *ShareOrLink) {
-	// First we find out what the highest ID is
-	count, err := getCount(migrator)
-	if err != nil {
-		fmt.Println("Error getting highest id: " + err.Error())
-		close(ch)
-		return
-	}
-	fmt.Printf("Migrating %d shares\n", count)
-
-	query := "select id, coalesce(uid_owner, '') as uid_owner, coalesce(uid_initiator, '') as uid_initiator, lower(coalesce(share_with, '')) as share_with, coalesce(fileid_prefix, '') as fileid_prefix, coalesce(item_source, '') as item_source, coalesce(item_type, '') as item_type, stime, permissions, share_type, orphan FROM oc_share order by id desc" // AND id=?"
-	params := []interface{}{}
-
-	res, err := migrator.OldDb.Query(query, params...)
-
-	if err != nil {
-		fmt.Printf("Fatal error: %s", err.Error())
-		close(ch)
-		return
-	}
-
-	for res.Next() {
-		var s OldShareEntry
-		res.Scan(&s.ID, &s.UIDOwner, &s.UIDInitiator, &s.ShareWith, &s.Prefix, &s.ItemSource, &s.ItemType, &s.STime, &s.Permissions, &s.ShareType, &s.Orphan)
-		newShare, err := oldShareToNewShare(ctx, migrator, s)
-		if err == nil {
-			ch <- newShare
-		} else {
-			fmt.Printf("Error occured for share %s: %s\n", s.ID, err.Error())
-		}
-	}
-
-	close(ch)
-}
-
 type OldShareEntry struct {
 	ID                           int
 	UIDOwner                     string
@@ -168,12 +85,20 @@ func RunMigration(username, password, host, name, gatewaysvc, token string, port
 	defer cancel()
 
 	// Set up migrator
-	shareManager, err := New(ctx, config)
+	shareManager, err := NewShareManager(ctx, config)
 	if err != nil {
 		fmt.Println("Failed to create shareManager: " + err.Error())
 		os.Exit(1)
 	}
-	sharemgr := shareManager.(*mgr)
+	sharemgr := shareManager.(*shareMgr)
+
+	linkManager, err := NewPublicShareManager(ctx, config)
+	if err != nil {
+		fmt.Println("Failed to create shareManager: " + err.Error())
+		os.Exit(1)
+	}
+	linkmgr := linkManager.(*publicShareMgr)
+
 	oldDb, err := sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", username, password, host, port, name))
 	if err != nil {
 		fmt.Println("Failed to create db: " + err.Error())
@@ -183,6 +108,7 @@ func RunMigration(username, password, host, name, gatewaysvc, token string, port
 		OldDb:    oldDb,
 		NewDb:    sharemgr.db,
 		ShareMgr: sharemgr,
+		LinkMgr:  linkmgr,
 	}
 
 	if dryRun {
@@ -371,10 +297,9 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 		} else if errors.Is(err, errtypes.NotFound(protoShare.Inode)) {
 			fmt.Printf("Marked share %d as an orphan (%s, %s)\n", s.ID, protoShare.Instance, protoShare.Inode)
 			protoShare.Orphan = true
-		} else {
-			// We do not set, because of a general error
-			// fmt.Printf("An error occured for share %d while statting (%s, %s): %s\n", s.ID, protoShare.Instance, protoShare.Inode, err.Error())
-		}
+		} // else {
+		// We do not set, because of a general error
+		// }
 	}
 
 	// ShareTypeUser = 0
