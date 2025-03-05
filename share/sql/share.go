@@ -75,7 +75,7 @@ func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.M
 	}
 
 	// Migrate schemas
-	err = db.AutoMigrate(&model.Share{}, &model.ShareState{})
+	err = db.AutoMigrate(&model.ShareID{}, &model.Share{}, &model.ShareState{})
 
 	if err != nil {
 		return nil, err
@@ -125,6 +125,18 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 		ShareWith:         shareWith,
 		SharedWithIsGroup: g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP,
 	}
+
+	// Create Shared ID
+	id, err := createID(m.db)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create id for PublicShare")
+	}
+
+	share.BaseModel = model.BaseModel{
+		ID:      id,
+		ShareId: model.ShareID{ID: id},
+	}
+
 	share.UIDOwner = conversions.FormatUserID(md.Owner)
 	share.UIDInitiator = conversions.FormatUserID(user.Id)
 	share.InitialPath = md.Path
@@ -415,7 +427,7 @@ func emptyShareWithId(id string) (*model.Share, error) {
 	}
 	share := &model.Share{
 		ProtoShare: model.ProtoShare{
-			Model: gorm.Model{
+			BaseModel: model.BaseModel{
 				ID: uint(intId),
 			},
 		},
