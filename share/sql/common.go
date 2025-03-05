@@ -3,6 +3,7 @@ package sql
 import (
 	"fmt"
 
+	model "github.com/cernbox/reva-plugins/share"
 	"github.com/cs3org/reva"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
@@ -42,5 +43,16 @@ func getDb(c config) (*gorm.DB, error) {
 	default: // default is mysql
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
 		return gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	}
+}
+
+func createID(db *gorm.DB) (uint, error) {
+	id := &model.ShareID{}
+
+	res := db.Create(&id)
+	if res.Error != nil {
+		return 0, res.Error
+	} else {
+		return id.ID, nil
 	}
 }

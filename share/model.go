@@ -30,12 +30,32 @@ func (i ItemType) String() string {
 	return string(i)
 }
 
+// ShareID only contains IDs of shares and public links. This is because OCIS requires
+// that shares and public links do not share an ID, so we need a shared table to make sure
+// that there are no duplicates.
+// This is implemented by having ShareID have an ID that is auto-increment, and shares and
+// public links will have their ID be a foreign key to ShareID
+// When creating a new share, we will then first create an ID entry and use this for the ID
+
+type ShareID struct {
+	ID uint `gorm:"primarykey"`
+}
+
+// We cannot use gorm.Model, because we want our ID to be a foreign key to ShareID
+type BaseModel struct {
+	ID        uint    `gorm:"uniqueIndex"`
+	ShareId   ShareID `gorm:"foreignKey:ID;references:ID"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
 // ProtoShare contains fields that are shared between PublicLinks and Shares.
 // Unfortunately, because these are shared, we cannot name our indexes
 // because then two indexes with the same name would be created
 type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
-	gorm.Model
+	BaseModel
 	UIDOwner     string   `gorm:"size:64"`
 	UIDInitiator string   `gorm:"size:64"`
 	ItemType     ItemType `gorm:"size:16;index:"` // file | folder | reference | symlink

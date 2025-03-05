@@ -106,6 +106,17 @@ func (m *publicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 		NotifyUploadsExtraRecipients: notifyUploadsExtraRecipients,
 	}
 
+	// Create Shared ID
+	id, err := createID(m.db)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create id for PublicShare")
+	}
+
+	publiclink.BaseModel = model.BaseModel{
+		ID:      id,
+		ShareId: model.ShareID{ID: id},
+	}
+
 	publiclink.UIDOwner = conversions.FormatUserID(md.Owner)
 	publiclink.UIDInitiator = conversions.FormatUserID(user.Id)
 	publiclink.InitialPath = md.Path
@@ -375,7 +386,7 @@ func emptyLinkWithId(id string) (*model.PublicLink, error) {
 	}
 	share := &model.PublicLink{
 		ProtoShare: model.ProtoShare{
-			Model: gorm.Model{
+			BaseModel: model.BaseModel{
 				ID: uint(intId),
 			},
 		},
