@@ -30,18 +30,40 @@ func (i ItemType) String() string {
 	return string(i)
 }
 
+// ShareID only contains IDs of shares and public links. This is because OCIS requires
+// that shares and public links do not share an ID, so we need a shared table to make sure
+// that there are no duplicates.
+// This is implemented by having ShareID have an ID that is auto-increment, and shares and
+// public links will have their ID be a foreign key to ShareID
+// When creating a new share, we will then first create an ID entry and use this for the ID
+
+type ShareID struct {
+	ID uint `gorm:"primarykey"`
+}
+
+// We cannot use gorm.Model, because we want our ID to be a foreign key to ShareID
+type BaseModel struct {
+	// Id has to be called Id and not ID, otherwise the foreign key will not work
+	// ID is a special field in GORM, which it uses as the default Primary Key
+	Id        uint    `gorm:"uniqueIndex"`
+	ShareId   ShareID `gorm:"foreignKey:Id;references:ID;constraint:OnDelete:CASCADE"` //;references:ID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
 // ProtoShare contains fields that are shared between PublicLinks and Shares.
 // Unfortunately, because these are shared, we cannot name our indexes
 // because then two indexes with the same name would be created
 type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
-	gorm.Model
+	BaseModel
 	UIDOwner     string   `gorm:"size:64"`
 	UIDInitiator string   `gorm:"size:64"`
 	ItemType     ItemType `gorm:"size:16;index:"` // file | folder | reference | symlink
 	InitialPath  string
-	Inode        string `gorm:"size:32;index:"`
-	Instance     string `gorm:"size:32;index:"`
+	Inode        string `gorm:"primaryKey;size:32;index:"`
+	Instance     string `gorm:"primaryKey;size:32;index:"`
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
@@ -49,15 +71,14 @@ type ProtoShare struct {
 
 type Share struct {
 	ProtoShare
-	ShareWith         string `gorm:"size:255;index:i_share_with"` // 255 because this can be a lw account, which are mapped from email addresses / ...
+	ShareWith         string `gorm:"primaryKey;size:255;index:i_share_with"` // 255 because this can be a lw account, which are mapped from email addresses / ...
 	SharedWithIsGroup bool
 	Description       string `gorm:"size:1024"`
 }
 
 type PublicLink struct {
 	ProtoShare
-	Token string `gorm:"index:i_token"`
-	// Enforce uniqueness in db re: Itemsource
+	Token                        string `gorm:"primaryKey;index:i_token"`
 	Quicklink                    bool
 	NotifyUploads                bool
 	NotifyUploadsExtraRecipients string
@@ -68,8 +89,8 @@ type PublicLink struct {
 
 type ShareState struct {
 	gorm.Model
-	ShareID uint  `gorm:"foreignKey:ShareID;references:ID;uniqueIndex:i_shareid_user"` // Define the foreign key field
-	Share   Share // Define the association
+	ShareID uint  `gorm:"uniqueIndex:i_shareid_user"`       // Define the foreign key field
+	Share   Share `gorm:"foreignKey:ShareID;references:Id"` // Define the association
 	// Can not be uid because of lw accs
 	User   string `gorm:"uniqueIndex:i_shareid_user;size:255"`
 	Synced bool
@@ -86,7 +107,7 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 	}
 	return &collaboration.Share{
 		Id: &collaboration.ShareId{
-			OpaqueId: strconv.FormatUint(uint64(s.ID), 10),
+			OpaqueId: strconv.FormatUint(uint64(s.Id), 10),
 		},
 		//ResourceId:  &provider.Reference{StorageId: s.Prefix, NodeId: s.ItemSource},
 		ResourceId: &provider.ResourceId{
@@ -139,7 +160,7 @@ func (p *PublicLink) AsCS3PublicShare() *link.PublicShare {
 	}
 	return &link.PublicShare{
 		Id: &link.PublicShareId{
-			OpaqueId: strconv.Itoa(int(p.ID)),
+			OpaqueId: strconv.Itoa(int(p.Id)),
 		},
 		ResourceId: &provider.ResourceId{
 			StorageId: p.Instance,
