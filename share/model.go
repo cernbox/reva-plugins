@@ -30,7 +30,7 @@ func (i ItemType) String() string {
 	return string(i)
 }
 
-// ShareID only contains IDs of shares and public links. This is because OCIS requires
+// ShareID only contains IDs of shares and public links. This is because the Web UI requires
 // that shares and public links do not share an ID, so we need a shared table to make sure
 // that there are no duplicates.
 // This is implemented by having ShareID have an ID that is auto-increment, and shares and
@@ -45,7 +45,7 @@ type ShareID struct {
 type BaseModel struct {
 	// Id has to be called Id and not ID, otherwise the foreign key will not work
 	// ID is a special field in GORM, which it uses as the default Primary Key
-	Id        uint    `gorm:"uniqueIndex"`
+	Id        uint    `gorm:"uniqueIndex;not null"`
 	ShareId   ShareID `gorm:"foreignKey:Id;references:ID;constraint:OnDelete:CASCADE"` //;references:ID
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -59,11 +59,11 @@ type ProtoShare struct {
 	// Including gorm.Model will embed a number of gorm-default fields
 	BaseModel
 	UIDOwner     string   `gorm:"size:64"`
-	UIDInitiator string   `gorm:"size:64"`
-	ItemType     ItemType `gorm:"size:16;index:"` // file | folder | reference | symlink
+	UIDInitiator string   `gorm:"size:64;index"`
+	ItemType     ItemType `gorm:"size:16;index"` // file | folder | reference | symlink
 	InitialPath  string
-	Inode        string `gorm:"primaryKey;size:32;index:"`
-	Instance     string `gorm:"primaryKey;size:32;index:"`
+	Inode        string `gorm:"primaryKey;size:32;index"`
+	Instance     string `gorm:"primaryKey;size:32;index"`
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
