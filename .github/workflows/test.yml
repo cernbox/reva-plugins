@@ -1,4 +1,4 @@
-name: lint
+name: test
 
 on:
   push:
@@ -9,8 +9,8 @@ on:
       - master
 
 jobs:
-  golangci:
-    name: lint
+  test:
+    name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +29,7 @@ jobs:
       - run: mv reva ../reva
       - name: Go mod tidy
         run: go mod tidy
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-            version: latest
-            args: --timeout=5m
+      - name: Install dependencies
+        run: go get .
+      - name: Test with the Go CLI
+        run: go test -v ./...
