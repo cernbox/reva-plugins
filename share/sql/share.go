@@ -75,8 +75,7 @@ func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.M
 	}
 
 	// Migrate schemas
-	err = db.AutoMigrate(&model.Share{}, &model.ShareState{})
-
+	err = db.AutoMigrate(&model.ShareID{}, &model.Share{}, &model.ShareState{})
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +123,18 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 		ShareWith:         shareWith,
 		SharedWithIsGroup: g.Grantee.Type == provider.GranteeType_GRANTEE_TYPE_GROUP,
 	}
+
+	// Create Shared ID
+	id, err := createID(m.db)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create id for PublicShare")
+	}
+
+	share.BaseModel = model.BaseModel{
+		Id:      id,
+		ShareId: model.ShareID{ID: id},
+	}
+
 	share.UIDOwner = conversions.FormatUserID(md.Owner)
 	share.UIDInitiator = conversions.FormatUserID(user.Id)
 	share.InitialPath = md.Path
@@ -145,7 +156,7 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 // Get Share by ID. Does not return orphans.
 func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId) (*model.Share, error) {
 	var share model.Share
-	res := m.db.First(&share, id.OpaqueId)
+	res := m.db.Where("id = ?", id.OpaqueId).First(&share)
 
 	if res.RowsAffected == 0 || share.Orphan {
 		return nil, errtypes.NotFound(id.OpaqueId)
@@ -242,7 +253,7 @@ func (m *shareMgr) Unshare(ctx context.Context, ref *collaboration.ShareReferenc
 	if err != nil {
 		return err
 	}
-	res := m.db.Delete(&share)
+	res := m.db.Where("id = ?", share.Id).Delete(&share)
 	return res.Error
 }
 
@@ -259,7 +270,7 @@ func (m *shareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 	}
 
 	permissions := conversions.SharePermToInt(p.Permissions)
-	res := m.db.Model(&share).Update("permissions", uint8(permissions))
+	res := m.db.Model(&share).Where("id = ?", share.Id).Update("permissions", uint8(permissions))
 	if res.Error != nil {
 		return nil, res.Error
 	}
@@ -389,7 +400,7 @@ func (m *shareMgr) ListReceivedShares(ctx context.Context, filters []*collaborat
 func (m *shareMgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
 	var shareState model.ShareState
 	query := m.db.Model(&shareState).
-		Where("share_id = ?", share.ID).
+		Where("share_id = ?", share.Id).
 		Where("user = ?", user.Username)
 
 	res := query.First(&shareState)
@@ -414,8 +425,8 @@ func emptyShareWithId(id string) (*model.Share, error) {
 	}
 	share := &model.Share{
 		ProtoShare: model.ProtoShare{
-			Model: gorm.Model{
-				ID: uint(intId),
+			BaseModel: model.BaseModel{
+				Id: uint(intId),
 			},
 		},
 	}

@@ -106,6 +106,17 @@ func (m *publicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 		NotifyUploadsExtraRecipients: notifyUploadsExtraRecipients,
 	}
 
+	// Create Shared ID
+	id, err := createID(m.db)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create id for PublicShare")
+	}
+
+	publiclink.BaseModel = model.BaseModel{
+		Id:      id,
+		ShareId: model.ShareID{ID: id},
+	}
+
 	publiclink.UIDOwner = conversions.FormatUserID(md.Owner)
 	publiclink.UIDInitiator = conversions.FormatUserID(user.Id)
 	publiclink.InitialPath = md.Path
@@ -155,30 +166,46 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	var res *gorm.DB
 	switch req.GetUpdate().GetType() {
 	case link.UpdatePublicShareRequest_Update_TYPE_DISPLAYNAME:
-		res = m.db.Model(&publiclink).Update("link_name", req.Update.GetDisplayName())
+		res = m.db.Model(&publiclink).
+			Where("id = ?", publiclink.Id).
+			Update("link_name", req.Update.GetDisplayName())
 	case link.UpdatePublicShareRequest_Update_TYPE_PERMISSIONS:
 		permissions := conversions.SharePermToInt(req.Update.GetGrant().GetPermissions().Permissions)
-		res = m.db.Model(&publiclink).Update("permissions", uint8(permissions))
+		res = m.db.Model(&publiclink).
+			Where("id = ?", publiclink.Id).
+			Update("permissions", uint8(permissions))
 	case link.UpdatePublicShareRequest_Update_TYPE_EXPIRATION:
-		res = m.db.Model(&publiclink).Update("expiration", time.Unix(int64(req.Update.GetGrant().Expiration.Seconds), 0))
+		res = m.db.Model(&publiclink).
+			Where("id = ?", publiclink.Id).
+			Update("expiration", time.Unix(int64(req.Update.GetGrant().Expiration.Seconds), 0))
 	case link.UpdatePublicShareRequest_Update_TYPE_PASSWORD:
 		if req.Update.GetGrant().Password == "" {
 			// Remove the password
-			res = m.db.Model(&publiclink).Update("password", "")
+			res = m.db.Model(&publiclink).
+				Where("id = ?", publiclink.Id).
+				Update("password", "")
 		} else {
 			// Update the password
 			hashedPwd, err := hashPassword(req.Update.GetGrant().Password, m.c.LinkPasswordHashCost)
 			if err != nil {
 				return nil, errors.Wrap(err, "could not hash share password")
 			}
-			res = m.db.Model(&publiclink).Update("password", hashedPwd)
+			res = m.db.Model(&publiclink).
+				Where("id = ?", publiclink.Id).
+				Update("password", hashedPwd)
 		}
 	case link.UpdatePublicShareRequest_Update_TYPE_DESCRIPTION:
-		res = m.db.Model(&publiclink).Update("description", req.Update.GetDescription())
+		res = m.db.Model(&publiclink).
+			Where("id = ?", publiclink.Id).
+			Update("description", req.Update.GetDescription())
 	case link.UpdatePublicShareRequest_Update_TYPE_NOTIFYUPLOADS:
-		res = m.db.Model(&publiclink).Update("notify_uploads", req.Update.GetNotifyUploads())
+		res = m.db.Model(&publiclink).
+			Where("id = ?", publiclink.Id).
+			Update("notify_uploads", req.Update.GetNotifyUploads())
 	case link.UpdatePublicShareRequest_Update_TYPE_NOTIFYUPLOADSEXTRARECIPIENTS:
-		res = m.db.Model(&publiclink).Update("notify_uploads_extra_recipients", req.Update.GetNotifyUploadsExtraRecipients())
+		res = m.db.Model(&publiclink).
+			Where("id = ?", publiclink.Id).
+			Update("notify_uploads_extra_recipients", req.Update.GetNotifyUploadsExtraRecipients())
 	default:
 		return nil, fmt.Errorf("invalid update type: %v", req.GetUpdate().GetType())
 	}
@@ -249,7 +276,7 @@ func (m *publicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, re
 	if err != nil {
 		return err
 	}
-	res := m.db.Delete(&publiclink)
+	res := m.db.Where("id = ?", publiclink.Id).Delete(&publiclink)
 	return res.Error
 
 }
@@ -284,7 +311,7 @@ func (m *publicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 // Get Link by ID. Does not return orphans or expired links.
 func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId) (*model.PublicLink, error) {
 	var link model.PublicLink
-	res := m.db.First(&link, id.OpaqueId)
+	res := m.db.Where("id = ?", id.OpaqueId).First(&link)
 
 	if res.RowsAffected == 0 || link.Orphan || isExpired(link) {
 		return nil, errtypes.NotFound(id.OpaqueId)
@@ -375,8 +402,8 @@ func emptyLinkWithId(id string) (*model.PublicLink, error) {
 	}
 	share := &model.PublicLink{
 		ProtoShare: model.ProtoShare{
-			Model: gorm.Model{
-				ID: uint(intId),
+			BaseModel: model.BaseModel{
+				Id: uint(intId),
 			},
 		},
 	}
