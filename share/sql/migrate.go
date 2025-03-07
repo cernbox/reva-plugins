@@ -115,7 +115,7 @@ func RunMigration(username, password, host, name, gatewaysvc, token string, port
 		migrator.NewDb = migrator.NewDb.Debug()
 	}
 
-	migrator.NewDb.AutoMigrate(&model.Share{}, &model.PublicLink{}, &model.ShareState{})
+	migrator.NewDb.AutoMigrate(&model.ShareID{}, &model.Share{}, &model.PublicLink{}, &model.ShareState{})
 
 	migrateShares(ctx, migrator)
 	fmt.Println("---------------------------------")
@@ -231,7 +231,16 @@ func handleSingleShare(ctx context.Context, migrator Migrator, s *OldShareEntry)
 		fmt.Printf("An error occured while migrating share %ds: %s\n", s.ID, err.Error())
 		return
 	}
-	var res *gorm.DB
+
+	shareId := model.ShareID{
+		ID: uint(s.ID),
+	}
+	res := migrator.NewDb.Create(&shareId)
+	if res.Error != nil {
+		fmt.Printf("An error occured while creating ID for share %ds: %s\n", s.ID, res.Error.Error())
+		return
+	}
+
 	if share.IsShare {
 		res = migrator.NewDb.Create(&share.Share)
 	} else {
@@ -266,9 +275,10 @@ func oldShareToNewShare(ctx context.Context, migrator Migrator, s *OldShareEntry
 		updatedAt = time.Now()
 		fmt.Printf("WARN: STime not set for share %d\n", s.ID)
 	}
+
 	protoShare := model.ProtoShare{
-		Model: gorm.Model{
-			ID:        uint(s.ID),
+		BaseModel: model.BaseModel{
+			Id:        uint(s.ID),
 			CreatedAt: createdAt,
 			UpdatedAt: updatedAt,
 		},
