@@ -45,7 +45,7 @@ type ShareID struct {
 type BaseModel struct {
 	// Id has to be called Id and not ID, otherwise the foreign key will not work
 	// ID is a special field in GORM, which it uses as the default Primary Key
-	Id        uint    `gorm:"uniqueIndex;not null"`
+	Id        uint    `gorm:"primaryKey;not null;autoIncrement:false"`
 	ShareId   ShareID `gorm:"foreignKey:Id;references:ID;constraint:OnDelete:CASCADE"` //;references:ID
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -62,8 +62,8 @@ type ProtoShare struct {
 	UIDInitiator string   `gorm:"size:64;index"`
 	ItemType     ItemType `gorm:"size:16;index"` // file | folder | reference | symlink
 	InitialPath  string
-	Inode        string `gorm:"primaryKey;size:32;index"`
-	Instance     string `gorm:"primaryKey;size:32;index"`
+	Inode        string `gorm:"size:32;index"`
+	Instance     string `gorm:"size:32;index"`
 	Permissions  uint8
 	Orphan       bool
 	Expiration   datatypes.NullTime
@@ -71,14 +71,15 @@ type ProtoShare struct {
 
 type Share struct {
 	ProtoShare
-	ShareWith         string `gorm:"primaryKey;size:255;index:i_share_with"` // 255 because this can be a lw account, which are mapped from email addresses / ...
+	ShareWith         string `gorm:"size:255;index:i_share_with"` // 255 because this can be a lw account, which are mapped from email addresses / ...
 	SharedWithIsGroup bool
 	Description       string `gorm:"size:1024"`
 }
 
 type PublicLink struct {
 	ProtoShare
-	Token                        string `gorm:"primaryKey;index:i_token"`
+	// Current tokens are only 16 chars long, but old tokens used to be 32 characters
+	Token                        string `gorm:"uniqueIndex:i_token;size:32"`
 	Quicklink                    bool
 	NotifyUploads                bool
 	NotifyUploadsExtraRecipients string
