@@ -105,7 +105,6 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 	}
 	_, err := m.getShareByKey(ctx, key, true)
 	// share already exists
-	// TODO stricter error checking
 	if err == nil {
 		return nil, errors.New(errtypes.AlreadyExists(key.String()).Error())
 	}
