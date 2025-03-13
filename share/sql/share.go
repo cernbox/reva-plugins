@@ -366,7 +366,8 @@ func (m *shareMgr) ListReceivedShares(ctx context.Context, filters []*collaborat
 	query := m.db.Model(&model.ShareState{}).
 		Select("share_states.*, shares.*").
 		Joins("RIGHT OUTER JOIN shares ON shares.id = share_states.share_id and share_states.user = ?", user.Username).
-		Where("shares.orphan = ?", false)
+		Where("shares.orphan = ?", false).
+		Where("shares.deleted_at IS NULL")
 
 	// Also search by all the groups the user is a member of
 	innerQuery := m.db.Where("shares.share_with = ? and shares.shared_with_is_group = ?", user.Username, false)
