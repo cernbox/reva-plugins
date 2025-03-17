@@ -339,7 +339,7 @@ func (m *publicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *l
 	return ln, nil
 }
 
-// Get Link by ID. Does not return orphans or expired links.
+// Get Link by ID. Does not return orphans or expired links if filter is set to true.
 func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId, filter bool) (*model.PublicLink, error) {
 	var link model.PublicLink
 	res := m.db.Where("id = ?", id.OpaqueId).First(&link)
@@ -355,7 +355,7 @@ func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId
 	return &link, nil
 }
 
-// Get Link by token. Does not return orphans or expired links.
+// Get Link by token. Does not return orphans or expired links if filter is set to true.
 func (m *publicShareMgr) getLinkByToken(ctx context.Context, token string, filter bool) (*model.PublicLink, error) {
 	if token == "" {
 		return nil, errors.New("no token provided to getLinkByToken")

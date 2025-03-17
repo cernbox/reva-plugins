@@ -450,7 +450,7 @@ func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReferen
 	return nil, errtypes.NotFound(ref.String())
 }
 
-// Get Share by ID. Does not return orphans.
+// Get Share by ID. Does not return orphans if filter is set to true.
 func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId, filter bool) (*model.Share, error) {
 	var share model.Share
 	res := m.db.First(&share, id.OpaqueId)
@@ -466,7 +466,7 @@ func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId, 
 	return &share, nil
 }
 
-// Get Share by Key. Does not return orphans.
+// Get Share by Key. Does not return orphans if filter is set to true.
 func (m *shareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool, filter bool) (*model.Share, error) {
 	owner := conversions.FormatUserID(key.Owner)
 
