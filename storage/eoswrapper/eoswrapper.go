@@ -26,6 +26,7 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/sprig"
+	"github.com/cernbox/reva-plugins/storage/eoshomewrapper"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva"
 	"github.com/cs3org/reva/pkg/appctx"
@@ -51,7 +52,7 @@ const (
 )
 
 type wrapper struct {
-	storage.FS
+	eoshomewrapper.FSWithListRegexSupport
 	conf            *eosfs.Config
 	mountIDTemplate *template.Template
 }
@@ -86,7 +87,8 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 		t = "eoshome-{{ trimAll \"/\" .Path | substr 0 1 }}"
 	}
 
-	eos, err := eosfs.NewEOSFS(ctx, &c)
+	eosFs, err := eosfs.NewEOSFS(ctx, &c)
+	eos := eosFs.(*eosfs.Eosfs)
 	if err != nil {
 		return nil, err
 	}
@@ -96,14 +98,14 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 		return nil, err
 	}
 
-	return &wrapper{FS: eos, conf: &c, mountIDTemplate: mountIDTemplate}, nil
+	return &wrapper{FSWithListRegexSupport: eos, conf: &c, mountIDTemplate: mountIDTemplate}, nil
 }
 
 // We need to override the two methods, GetMD and ListFolder to fill the
 // StorageId in the ResourceInfo objects.
 
 func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []string) (*provider.ResourceInfo, error) {
-	res, err := w.FS.GetMD(ctx, ref, mdKeys)
+	res, err := w.FSWithListRegexSupport.GetMD(ctx, ref, mdKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +124,7 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 }
 
 func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKeys []string) ([]*provider.ResourceInfo, error) {
-	res, err := w.FS.ListFolder(ctx, ref, mdKeys)
+	res, err := w.FSWithListRegexSupport.ListFolder(ctx, ref, mdKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +142,7 @@ func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([
 		return nil, err
 	}
 
-	return w.FS.ListRevisions(ctx, ref)
+	return w.FSWithListRegexSupport.ListRevisions(ctx, ref)
 }
 
 func (w *wrapper) DownloadRevision(ctx context.Context, ref *provider.Reference, revisionKey string) (io.ReadCloser, error) {
@@ -148,7 +150,7 @@ func (w *wrapper) DownloadRevision(ctx context.Context, ref *provider.Reference,
 		return nil, err
 	}
 
-	return w.FS.DownloadRevision(ctx, ref, revisionKey)
+	return w.FSWithListRegexSupport.DownloadRevision(ctx, ref, revisionKey)
 }
 
 func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, revisionKey string) error {
@@ -156,7 +158,7 @@ func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, 
 		return err
 	}
 
-	return w.FS.RestoreRevision(ctx, ref, revisionKey)
+	return w.RestoreRevision(ctx, ref, revisionKey)
 }
 
 func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *provider.Grantee) error {
@@ -165,7 +167,7 @@ func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *pro
 		if err := w.userIsProjectAdmin(ctx, ref); err != nil {
 			return err
 		}
-		return w.FS.DenyGrant(ctx, ref, g)
+		return w.FSWithListRegexSupport.DenyGrant(ctx, ref, g)
 	}
 
 	return errtypes.NotSupported("eos: deny grant is only enabled for project spaces")
@@ -220,7 +222,7 @@ func (w *wrapper) userIsProjectAdmin(ctx context.Context, ref *provider.Referenc
 		return nil
 	}
 
-	res, err := w.FS.GetMD(ctx, ref, nil)
+	res, err := w.GetMD(ctx, ref, nil)
 	if err != nil {
 		return err
 	}
