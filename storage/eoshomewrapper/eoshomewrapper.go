@@ -24,6 +24,7 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/sprig"
+	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva"
 	"github.com/cs3org/reva/pkg/appctx"
@@ -37,8 +38,13 @@ func init() {
 	reva.RegisterPlugin(wrapper{})
 }
 
-type wrapper struct {
+type FSWithListRegexSupport interface {
 	storage.FS
+	ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error)
+}
+
+type wrapper struct {
+	FSWithListRegexSupport
 	mountIDTemplate *template.Template
 }
 
@@ -67,7 +73,8 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 		t = "eoshome-{{substr 0 1 .Username}}"
 	}
 
-	eos, err := eosfs.NewEOSFS(ctx, &c)
+	eosFs, err := eosfs.NewEOSFS(ctx, &c)
+	eos := eosFs.(*eosfs.Eosfs)
 	if err != nil {
 		return nil, err
 	}
@@ -77,14 +84,14 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 		return nil, err
 	}
 
-	return &wrapper{FS: eos, mountIDTemplate: mountIDTemplate}, nil
+	return &wrapper{FSWithListRegexSupport: eos, mountIDTemplate: mountIDTemplate}, nil
 }
 
 // We need to override the two methods, GetMD and ListFolder to fill the
 // StorageId in the ResourceInfo objects.
 
 func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []string) (*provider.ResourceInfo, error) {
-	res, err := w.FS.GetMD(ctx, ref, mdKeys)
+	res, err := w.FSWithListRegexSupport.GetMD(ctx, ref, mdKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +105,7 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 }
 
 func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKeys []string) ([]*provider.ResourceInfo, error) {
-	res, err := w.FS.ListFolder(ctx, ref, mdKeys)
+	res, err := w.FSWithListRegexSupport.ListFolder(ctx, ref, mdKeys)
 	if err != nil {
 		return nil, err
 	}
