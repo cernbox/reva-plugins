@@ -70,7 +70,6 @@ func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publi
 
 	// Migrate schemas
 	err = db.AutoMigrate(&model.PublicLink{})
-
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +129,6 @@ func (m *publicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 		hashedPassword, err := hashPassword(g.Password, m.c.LinkPasswordHashCost)
 		if err != nil {
 			return nil, errors.Wrap(err, "could not hash link password")
-
 		}
 		publiclink.Password = hashedPassword
 	}
@@ -214,7 +212,6 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	}
 
 	return m.GetPublicShare(ctx, u, req.Ref, true)
-
 }
 
 func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
@@ -252,7 +249,7 @@ func (m *publicShareMgr) ListPublicShares(ctx context.Context, u *user.User, fil
 	var cs3links []*link.PublicShare
 
 	for _, l := range links {
-		if !isExpired(l) && !l.Orphan {
+		if !l.Orphan {
 			cs3links = append(cs3links, l.AsCS3PublicShare())
 		}
 	}
@@ -267,7 +264,6 @@ func (m *publicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, re
 	}
 	res := m.db.Where("id = ?", publiclink.Id).Delete(&publiclink)
 	return res.Error
-
 }
 
 // Get a PublicShare identified by token. This function returns `errtypes.InvalidCredentials` if `auth` does not contain
@@ -339,7 +335,7 @@ func (m *publicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *l
 	return ln, nil
 }
 
-// Get Link by ID. Does not return orphans or expired links if filter is set to true.
+// Get Link by ID. Does not return orphans links if filter is set to true.
 func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId, filter bool) (*model.PublicLink, error) {
 	var link model.PublicLink
 	res := m.db.Where("id = ?", id.OpaqueId).First(&link)
@@ -348,7 +344,7 @@ func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId
 		return nil, errtypes.NotFound(id.OpaqueId)
 	}
 
-	if filter && (link.Orphan || isExpired(link)) {
+	if filter && (link.Orphan) {
 		return nil, errtypes.NotFound(id.OpaqueId)
 	}
 
