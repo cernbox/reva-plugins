@@ -155,7 +155,7 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	if id := req.Ref.GetId(); id != nil {
 		publiclink, err = emptyLinkWithId(id.OpaqueId)
 	} else {
-		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), true)
+		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), false)
 	}
 	if err != nil {
 		return nil, err
@@ -217,11 +217,13 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
 	var ln *model.PublicLink
 	var err error
+
+	// Filters are set as false in order to also find expired links
 	switch {
 	case ref.GetId() != nil:
-		ln, err = m.getLinkByID(ctx, ref.GetId(), true)
+		ln, err = m.getLinkByID(ctx, ref.GetId(), false)
 	case ref.GetToken() != "":
-		ln, err = m.getLinkByToken(ctx, ref.GetToken(), true)
+		ln, err = m.getLinkByToken(ctx, ref.GetToken(), false)
 	default:
 		err = errtypes.NotFound(ref.String())
 	}
@@ -335,7 +337,7 @@ func (m *publicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *l
 	return ln, nil
 }
 
-// Get Link by ID. Does not return orphans links if filter is set to true.
+// Get Link by ID. Does not return orphans or expired links if filter is set to true.
 func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId, filter bool) (*model.PublicLink, error) {
 	var link model.PublicLink
 	res := m.db.Where("id = ?", id.OpaqueId).First(&link)
@@ -344,7 +346,7 @@ func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId
 		return nil, errtypes.NotFound(id.OpaqueId)
 	}
 
-	if filter && (link.Orphan) {
+	if filter && (link.Orphan || isExpired(link)) {
 		return nil, errtypes.NotFound(id.OpaqueId)
 	}
 
