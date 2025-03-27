@@ -70,7 +70,6 @@ func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publi
 
 	// Migrate schemas
 	err = db.AutoMigrate(&model.PublicLink{})
-
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +129,6 @@ func (m *PublicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 		hashedPassword, err := hashPassword(g.Password, m.c.LinkPasswordHashCost)
 		if err != nil {
 			return nil, errors.Wrap(err, "could not hash link password")
-
 		}
 		publiclink.Password = hashedPassword
 	}
@@ -157,7 +155,7 @@ func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	if id := req.Ref.GetId(); id != nil {
 		publiclink, err = emptyLinkWithId(id.OpaqueId)
 	} else {
-		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), true)
+		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), false)
 	}
 	if err != nil {
 		return nil, err
@@ -214,17 +212,18 @@ func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	}
 
 	return m.GetPublicShare(ctx, u, req.Ref, true)
-
 }
 
 func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
 	var ln *model.PublicLink
 	var err error
+
+	// Filters are set as false in order to also find expired links
 	switch {
 	case ref.GetId() != nil:
-		ln, err = m.getLinkByID(ctx, ref.GetId(), true)
+		ln, err = m.getLinkByID(ctx, ref.GetId(), false)
 	case ref.GetToken() != "":
-		ln, err = m.getLinkByToken(ctx, ref.GetToken(), true)
+		ln, err = m.getLinkByToken(ctx, ref.GetToken(), false)
 	default:
 		err = errtypes.NotFound(ref.String())
 	}
@@ -252,7 +251,7 @@ func (m *PublicShareMgr) ListPublicShares(ctx context.Context, u *user.User, fil
 	var cs3links []*link.PublicShare
 
 	for _, l := range links {
-		if !isExpired(l) && !l.Orphan {
+		if !l.Orphan {
 			cs3links = append(cs3links, l.AsCS3PublicShare())
 		}
 	}
@@ -267,7 +266,6 @@ func (m *PublicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, re
 	}
 	res := m.db.Where("id = ?", publiclink.Id).Delete(&publiclink)
 	return res.Error
-
 }
 
 // Get a PublicShare identified by token. This function returns `errtypes.InvalidCredentials` if `auth` does not contain
