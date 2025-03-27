@@ -47,14 +47,14 @@ import (
 	"github.com/pkg/errors"
 )
 
-func (shareMgr) RevaPlugin() reva.PluginInfo {
+func (ShareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.usershareprovider.drivers.sql",
 		New: NewShareManager,
 	}
 }
 
-type shareMgr struct {
+type ShareMgr struct {
 	c  *config
 	db *gorm.DB
 }
@@ -80,14 +80,14 @@ func NewShareManager(ctx context.Context, m map[string]interface{}) (revashare.M
 		return nil, err
 	}
 
-	mgr := &shareMgr{
+	mgr := &ShareMgr{
 		c:  &c,
 		db: db,
 	}
 	return mgr, nil
 }
 
-func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
+func (m *ShareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *collaboration.ShareGrant) (*collaboration.Share, error) {
 	user := appctx.ContextMustGetUser(ctx)
 
 	// do not allow share to myself or the owner if share is for a user
@@ -154,8 +154,8 @@ func (m *shareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 	return share.AsCS3Share(granteeType), nil
 }
 
-func (m *shareMgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
-	share, err := m.getShare(ctx, ref, true)
+func (m *ShareMgr) GetShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.Share, error) {
+	share, err := m.getShare(ctx, ref, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (m *shareMgr) GetShare(ctx context.Context, ref *collaboration.ShareReferen
 	return cs3share, nil
 }
 
-func (m *shareMgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) error {
+func (m *ShareMgr) Unshare(ctx context.Context, ref *collaboration.ShareReference) error {
 	share, err := m.getEmptyShareByRef(ctx, ref)
 	if err != nil {
 		return err
@@ -175,7 +175,7 @@ func (m *shareMgr) Unshare(ctx context.Context, ref *collaboration.ShareReferenc
 	return res.Error
 }
 
-func (m *shareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, p *collaboration.SharePermissions) (*collaboration.Share, error) {
+func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, p *collaboration.SharePermissions) (*collaboration.Share, error) {
 	share, err := m.getEmptyShareByRef(ctx, ref)
 	if err != nil {
 		return nil, err
@@ -190,7 +190,7 @@ func (m *shareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 	return m.GetShare(ctx, ref)
 }
 
-func (m *shareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
+func (m *ShareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
 	query := m.db.Model(&model.Share{}).
 		Where("orphan = ?", false)
 
@@ -219,7 +219,7 @@ func (m *shareMgr) ListShares(ctx context.Context, filters []*collaboration.Filt
 }
 
 // we list the shares that are targeted to the user in context or to the user groups.
-func (m *shareMgr) ListReceivedShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.ReceivedShare, error) {
+func (m *ShareMgr) ListReceivedShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 
 	// We need to do this to parse the result
@@ -268,7 +268,7 @@ func (m *shareMgr) ListReceivedShares(ctx context.Context, filters []*collaborat
 	return receivedShares, nil
 }
 
-func (m *shareMgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.ReceivedShare, error) {
+func (m *ShareMgr) GetReceivedShare(ctx context.Context, ref *collaboration.ShareReference) (*collaboration.ReceivedShare, error) {
 	var s *collaboration.ReceivedShare
 	var err error
 	switch {
@@ -292,7 +292,7 @@ func (m *shareMgr) GetReceivedShare(ctx context.Context, ref *collaboration.Shar
 	return s, nil
 }
 
-func (m *shareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
+func (m *ShareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collaboration.ReceivedShare, fieldMask *field_mask.FieldMask) (*collaboration.ReceivedShare, error) {
 
 	user := appctx.ContextMustGetUser(ctx)
 
@@ -341,8 +341,8 @@ func (m *shareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collabora
 
 // Exported functions below are not part of the CS3-defined API, but are used by cernboxcop
 
-func (m *shareMgr) GetShareUnfiltered(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
-	share, err := m.getShare(ctx, ref, false)
+func (m *ShareMgr) GetShareUnfiltered(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
+	share, err := m.getShare(ctx, ref, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -350,50 +350,70 @@ func (m *shareMgr) GetShareUnfiltered(ctx context.Context, ref *collaboration.Sh
 	return share, nil
 }
 
+func (m *ShareMgr) GetSharesByShareWith(ctx context.Context, shareWith string) ([]*collaboration.Share, error) {
+	query := m.db.Model(&model.Share{}).
+		Where("orphan = ?", false).
+		Where("share_with = ?", shareWith)
+
+	var shares []model.Share
+	var cs3shares []*collaboration.Share
+	res := query.Find(&shares)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+
+	for _, s := range shares {
+		granteeType, _ := m.getUserType(ctx, s.ShareWith)
+		cs3share := s.AsCS3Share(granteeType)
+		cs3shares = append(cs3shares, cs3share)
+	}
+
+	return cs3shares, nil
+}
+
 // TransferShare transfers a share to a new owner. Only to be used for shares in projects.
-func (m *shareMgr) TransferShare(ctx context.Context, ref *collaboration.ShareReference, newOwner string) (*collaboration.Share, error) {
+func (m *ShareMgr) TransferShare(ctx context.Context, ref *collaboration.ShareReference, newOwner string) error {
 	if newOwner == "" {
-		return nil, errors.New("Must pass a non-nil owner")
+		return errors.New("Must pass a non-nil owner")
 	}
 
 	share, err := m.getEmptyShareByRef(ctx, ref)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	res := m.db.Model(&share).Update("uid_owner", newOwner)
 	if res.Error != nil {
-		return nil, res.Error
+		return res.Error
 	}
-
-	return m.GetShare(ctx, ref)
+	return nil
 }
 
 // Move share moves a share to a new location, also updating its owner. It is the reponsibility of the caller to ensure that `newOwner`
 // corresponds to the owner of `newLocation`
-func (m *shareMgr) MoveShare(ctx context.Context, ref *collaboration.ShareReference, newLocation *provider.ResourceId, newOwner string) (*collaboration.Share, error) {
+func (m *ShareMgr) MoveShare(ctx context.Context, ref *collaboration.ShareReference, newLocation *provider.ResourceId, newOwner string) error {
 	if newOwner == "" {
-		return nil, errors.New("Must pass a non-nil owner")
+		return errors.New("Must pass a non-nil owner")
 	}
 
 	if newLocation.OpaqueId == "" || newLocation.StorageId == "" {
-		return nil, errors.New("Must pass a non-nil location")
+		return errors.New("Must pass a non-nil location")
 	}
 
 	share, err := m.getEmptyShareByRef(ctx, ref)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	res := m.db.Model(&share).Update("uid_owner", newOwner).Update("inode", newLocation.OpaqueId).Update("instance", newLocation.StorageId)
 	if res.Error != nil {
-		return nil, res.Error
+		return res.Error
 	}
 
-	return m.GetShare(ctx, ref)
+	return nil
 }
 
-func (m *shareMgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, error) {
+func (m *ShareMgr) getPath(ctx context.Context, resID *provider.ResourceId) (string, error) {
 	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
 	if err != nil {
 		return "", err
@@ -415,7 +435,7 @@ func (m *shareMgr) getPath(ctx context.Context, resID *provider.ResourceId) (str
 	return "", errors.New(res.Status.Code.String() + ": " + res.Status.Message)
 }
 
-func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReference, filter bool) (*model.Share, error) {
+func (m *ShareMgr) getShare(ctx context.Context, ref *collaboration.ShareReference, filter bool, verifyOwner bool) (*model.Share, error) {
 	var s *model.Share
 	var err error
 	switch {
@@ -428,6 +448,10 @@ func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReferen
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if !verifyOwner {
+		return s, nil
 	}
 
 	user := appctx.ContextMustGetUser(ctx)
@@ -451,7 +475,7 @@ func (m *shareMgr) getShare(ctx context.Context, ref *collaboration.ShareReferen
 }
 
 // Get Share by ID. Does not return orphans if filter is set to true.
-func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId, filter bool) (*model.Share, error) {
+func (m *ShareMgr) getShareByID(_ context.Context, id *collaboration.ShareId, filter bool) (*model.Share, error) {
 	var share model.Share
 	res := m.db.First(&share, id.OpaqueId)
 
@@ -467,7 +491,7 @@ func (m *shareMgr) getShareByID(ctx context.Context, id *collaboration.ShareId, 
 }
 
 // Get Share by Key. Does not return orphans if filter is set to true.
-func (m *shareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool, filter bool) (*model.Share, error) {
+func (m *ShareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKey, checkOwner bool, filter bool) (*model.Share, error) {
 	owner := conversions.FormatUserID(key.Owner)
 
 	var share model.Share
@@ -499,7 +523,7 @@ func (m *shareMgr) getShareByKey(ctx context.Context, key *collaboration.ShareKe
 	return &share, nil
 }
 
-func (m *shareMgr) isProjectAdmin(u *userpb.User, path string) bool {
+func (m *ShareMgr) isProjectAdmin(u *userpb.User, path string) bool {
 	if strings.HasPrefix(path, projectPathPrefix) {
 		// The path will look like /eos/project/c/cernbox, we need to extract the project name
 		parts := strings.SplitN(path, "/", 6)
@@ -519,7 +543,7 @@ func (m *shareMgr) isProjectAdmin(u *userpb.User, path string) bool {
 	return false
 }
 
-func (m *shareMgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
+func (m *ShareMgr) getShareState(ctx context.Context, share *model.Share, user *userpb.User) (*model.ShareState, error) {
 	var shareState model.ShareState
 	query := m.db.Model(&shareState).
 		Where("share_id = ?", share.Id).
@@ -541,13 +565,13 @@ func (m *shareMgr) getShareState(ctx context.Context, share *model.Share, user *
 }
 
 // Returns a Share containing at least the id field, but not necessarily more
-func (m *shareMgr) getEmptyShareByRef(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
+func (m *ShareMgr) getEmptyShareByRef(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
 	var share *model.Share
 	var err error
 	if id := ref.GetId(); id != nil {
 		share, err = emptyShareWithId(id.OpaqueId)
 	} else {
-		share, err = m.getShare(ctx, ref, true)
+		share, err = m.getShare(ctx, ref, true, true)
 	}
 	return share, err
 }
@@ -567,7 +591,7 @@ func emptyShareWithId(id string) (*model.Share, error) {
 	return share, nil
 }
 
-func (m *shareMgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
+func (m *ShareMgr) getReceivedByID(ctx context.Context, id *collaboration.ShareId, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 	share, err := m.getShareByID(ctx, id, true)
 	if err != nil {
@@ -583,7 +607,7 @@ func (m *shareMgr) getReceivedByID(ctx context.Context, id *collaboration.ShareI
 	return receivedShare, nil
 }
 
-func (m *shareMgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
+func (m *ShareMgr) getReceivedByKey(ctx context.Context, key *collaboration.ShareKey, gtype userpb.UserType) (*collaboration.ReceivedShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 	share, err := m.getShareByKey(ctx, key, false, true)
 	if err != nil {
@@ -599,7 +623,7 @@ func (m *shareMgr) getReceivedByKey(ctx context.Context, key *collaboration.Shar
 	return receivedShare, nil
 }
 
-func (m *shareMgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
+func (m *ShareMgr) getUserType(ctx context.Context, username string) (userpb.UserType, error) {
 	client, err := pool.GetGatewayServiceClient(pool.Endpoint(m.c.GatewaySvc))
 	if err != nil {
 		return userpb.UserType_USER_TYPE_PRIMARY, err
@@ -618,7 +642,7 @@ func (m *shareMgr) getUserType(ctx context.Context, username string) (userpb.Use
 	return userRes.GetUser().Id.Type, nil
 }
 
-func (m *shareMgr) appendShareFiltersToQuery(query *gorm.DB, filters []*collaboration.Filter) {
+func (m *ShareMgr) appendShareFiltersToQuery(query *gorm.DB, filters []*collaboration.Filter) {
 	// We want to chain filters of different types with AND
 	// and filters of the same type with OR
 	// Therefore, we group them by type
@@ -646,6 +670,16 @@ func (m *shareMgr) appendShareFiltersToQuery(query *gorm.DB, filters []*collabor
 					innerQuery = innerQuery.Where("shared_with_is_group = ?", isGroup)
 				} else {
 					innerQuery = innerQuery.Or("shared_with_is_group = ? ", isGroup)
+				}
+			}
+			query = query.Where(innerQuery)
+		case collaboration.Filter_TYPE_CREATOR:
+			innerQuery := m.db
+			for i, filter := range filters {
+				if i == 0 {
+					innerQuery = innerQuery.Where("uid_initiator = ?", filter.GetCreator().OpaqueId)
+				} else {
+					innerQuery = innerQuery.Or("uid_initiator = ?", filter.GetCreator().OpaqueId)
 				}
 			}
 			query = query.Where(innerQuery)
