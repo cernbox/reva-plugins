@@ -45,12 +45,12 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-type publicShareMgr struct {
+type PublicShareMgr struct {
 	c  *config
 	db *gorm.DB
 }
 
-func (publicShareMgr) RevaPlugin() reva.PluginInfo {
+func (PublicShareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.publicshareprovider.drivers.sql",
 		New: NewPublicShareManager,
@@ -75,7 +75,7 @@ func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publi
 		return nil, err
 	}
 
-	mgr := &publicShareMgr{
+	mgr := &PublicShareMgr{
 		c:  &c,
 		db: db,
 	}
@@ -84,7 +84,7 @@ func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publi
 
 // These follow the interface defined in github.com/cs3org/reva/pkg/publishare/publicshare.go
 
-func (m *publicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md *provider.ResourceInfo, g *link.Grant, description string, internal bool, notifyUploads bool, notifyUploadsExtraRecipients string) (*link.PublicShare, error) {
+func (m *PublicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md *provider.ResourceInfo, g *link.Grant, description string, internal bool, notifyUploads bool, notifyUploadsExtraRecipients string) (*link.PublicShare, error) {
 	user := appctx.ContextMustGetUser(ctx)
 	if user == nil {
 		return nil, errors.New("no user found in context")
@@ -150,7 +150,7 @@ func (m *publicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 	return publiclink.AsCS3PublicShare(), nil
 }
 
-func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, req *link.UpdatePublicShareRequest, g *link.Grant) (*link.PublicShare, error) {
+func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, req *link.UpdatePublicShareRequest, g *link.Grant) (*link.PublicShare, error) {
 	var publiclink *model.PublicLink
 	var err error
 
@@ -217,7 +217,7 @@ func (m *publicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 
 }
 
-func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
+func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
 	var ln *model.PublicLink
 	var err error
 	switch {
@@ -243,7 +243,7 @@ func (m *publicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 }
 
 // List public shares that match the given filters
-func (m *publicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
+func (m *PublicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
 	links, err := m.ListPublicLinks(ctx, u, filters, md, sign)
 	if err != nil {
 		return nil, err
@@ -260,7 +260,7 @@ func (m *publicShareMgr) ListPublicShares(ctx context.Context, u *user.User, fil
 	return cs3links, nil
 }
 
-func (m *publicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference) error {
+func (m *PublicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference) error {
 	publiclink, err := m.getEmptyPLByRef(ctx, ref)
 	if err != nil {
 		return err
@@ -272,7 +272,7 @@ func (m *publicShareMgr) RevokePublicShare(ctx context.Context, u *user.User, re
 
 // Get a PublicShare identified by token. This function returns `errtypes.InvalidCredentials` if `auth` does not contain
 // a valid password or signature in case the PublicShare is password-protected
-func (m *publicShareMgr) GetPublicShareByToken(ctx context.Context, token string, auth *link.PublicShareAuthentication, sign bool) (*link.PublicShare, error) {
+func (m *PublicShareMgr) GetPublicShareByToken(ctx context.Context, token string, auth *link.PublicShareAuthentication, sign bool) (*link.PublicShare, error) {
 	publiclink, err := m.getLinkByToken(ctx, token, true)
 	if err != nil {
 		return nil, err
@@ -301,7 +301,7 @@ func (m *publicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 
 // List public links in the CERN-specific format. Used in cernboxcop.
 // Note: this method does not filter for orphaned or expired links!
-func (m *publicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]model.PublicLink, error) {
+func (m *PublicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]model.PublicLink, error) {
 	query := m.db.Model(&model.PublicLink{})
 
 	if u != nil {
@@ -321,7 +321,7 @@ func (m *publicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filt
 	return links, nil
 }
 
-func (m *publicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *link.PublicShareReference, filter bool) (*model.PublicLink, error) {
+func (m *PublicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *link.PublicShareReference, filter bool) (*model.PublicLink, error) {
 	var ln *model.PublicLink
 	var err error
 	switch {
@@ -340,7 +340,7 @@ func (m *publicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *l
 }
 
 // Get Link by ID. Does not return orphans or expired links if filter is set to true.
-func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId, filter bool) (*model.PublicLink, error) {
+func (m *PublicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId, filter bool) (*model.PublicLink, error) {
 	var link model.PublicLink
 	res := m.db.Where("id = ?", id.OpaqueId).First(&link)
 
@@ -356,7 +356,7 @@ func (m *publicShareMgr) getLinkByID(ctx context.Context, id *link.PublicShareId
 }
 
 // Get Link by token. Does not return orphans or expired links if filter is set to true.
-func (m *publicShareMgr) getLinkByToken(ctx context.Context, token string, filter bool) (*model.PublicLink, error) {
+func (m *PublicShareMgr) getLinkByToken(ctx context.Context, token string, filter bool) (*model.PublicLink, error) {
 	if token == "" {
 		return nil, errors.New("no token provided to getLinkByToken")
 	}
@@ -422,7 +422,7 @@ func isExpired(l model.PublicLink) bool {
 }
 
 // Returns a Public Link containing at least the id field, but not necessarily more
-func (m *publicShareMgr) getEmptyPLByRef(ctx context.Context, ref *link.PublicShareReference) (*model.PublicLink, error) {
+func (m *PublicShareMgr) getEmptyPLByRef(ctx context.Context, ref *link.PublicShareReference) (*model.PublicLink, error) {
 	var err error
 	var publiclink *model.PublicLink
 
@@ -449,7 +449,7 @@ func emptyLinkWithId(id string) (*model.PublicLink, error) {
 	return share, nil
 }
 
-func (m *publicShareMgr) appendLinkFiltersToQuery(query *gorm.DB, filters []*link.ListPublicSharesRequest_Filter) {
+func (m *PublicShareMgr) appendLinkFiltersToQuery(query *gorm.DB, filters []*link.ListPublicSharesRequest_Filter) {
 	// We want to chain filters of different types with AND
 	// and filters of the same type with OR
 	// Therefore, we group them by type

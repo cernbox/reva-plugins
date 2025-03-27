@@ -29,8 +29,8 @@ type config struct {
 }
 
 func init() {
-	reva.RegisterPlugin(shareMgr{})
-	reva.RegisterPlugin(publicShareMgr{})
+	reva.RegisterPlugin(ShareMgr{})
+	reva.RegisterPlugin(PublicShareMgr{})
 }
 
 func getDb(c config) (*gorm.DB, error) {
