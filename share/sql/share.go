@@ -191,24 +191,12 @@ func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 }
 
 func (m *ShareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	query := m.db.Model(&model.Share{}).
-		Where("orphan = ?", false)
-
-	if u, ok := appctx.ContextGetUser(ctx); ok {
-		uid := conversions.FormatUserID(u.Id)
-		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	shares, err := m.ListModelShares(ctx, filters)
+	if err != nil {
+		return nil, err
 	}
 
-	// Append filters
-	m.appendShareFiltersToQuery(query, filters)
-
-	var shares []model.Share
 	var cs3shares []*collaboration.Share
-	res := query.Find(&shares)
-	if res.Error != nil {
-		return nil, res.Error
-	}
-
 	for _, s := range shares {
 		granteeType, _ := m.getUserType(ctx, s.ShareWith)
 		cs3share := s.AsCS3Share(granteeType)
@@ -341,6 +329,27 @@ func (m *ShareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collabora
 
 // Exported functions below are not part of the CS3-defined API, but are used by cernboxcop
 
+// Used by cernboxcop, to include listings with orphans (which cannot be represented in the CS3 Shares)
+func (m *ShareMgr) ListModelShares(ctx context.Context, filters []*collaboration.Filter) ([]model.Share, error) {
+	query := m.db.Model(&model.Share{}).
+		Where("orphan = ?", false)
+
+	if u, ok := appctx.ContextGetUser(ctx); ok {
+		uid := conversions.FormatUserID(u.Id)
+		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	}
+
+	// Append filters
+	m.appendShareFiltersToQuery(query, filters)
+
+	var shares []model.Share
+	res := query.Find(&shares)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	return shares, nil
+}
+
 func (m *ShareMgr) GetShareUnfiltered(ctx context.Context, ref *collaboration.ShareReference) (*model.Share, error) {
 	share, err := m.getShare(ctx, ref, false, false)
 	if err != nil {
@@ -350,31 +359,24 @@ func (m *ShareMgr) GetShareUnfiltered(ctx context.Context, ref *collaboration.Sh
 	return share, nil
 }
 
-func (m *ShareMgr) GetSharesByShareWith(ctx context.Context, shareWith string) ([]*collaboration.Share, error) {
+func (m *ShareMgr) GetSharesByShareWith(ctx context.Context, shareWith string) ([]model.Share, error) {
 	query := m.db.Model(&model.Share{}).
 		Where("orphan = ?", false).
 		Where("share_with = ?", shareWith)
 
 	var shares []model.Share
-	var cs3shares []*collaboration.Share
 	res := query.Find(&shares)
 	if res.Error != nil {
 		return nil, res.Error
 	}
 
-	for _, s := range shares {
-		granteeType, _ := m.getUserType(ctx, s.ShareWith)
-		cs3share := s.AsCS3Share(granteeType)
-		cs3shares = append(cs3shares, cs3share)
-	}
-
-	return cs3shares, nil
+	return shares, nil
 }
 
-// TransferShare transfers a share to a new owner. Only to be used for shares in projects.
-func (m *ShareMgr) TransferShare(ctx context.Context, ref *collaboration.ShareReference, newOwner string) error {
-	if newOwner == "" {
-		return errors.New("Must pass a non-nil owner")
+// TransferShare transfers a share to a new initiator. Only to be used for shares in projects.
+func (m *ShareMgr) TransferShare(ctx context.Context, ref *collaboration.ShareReference, newInitiator string) error {
+	if newInitiator == "" {
+		return errors.New("Must pass a non-nil initiator")
 	}
 
 	share, err := m.getEmptyShareByRef(ctx, ref)
@@ -382,7 +384,7 @@ func (m *ShareMgr) TransferShare(ctx context.Context, ref *collaboration.ShareRe
 		return err
 	}
 
-	res := m.db.Model(&share).Update("uid_owner", newOwner)
+	res := m.db.Model(&share).Update("uid_initiator", newInitiator)
 	if res.Error != nil {
 		return res.Error
 	}
