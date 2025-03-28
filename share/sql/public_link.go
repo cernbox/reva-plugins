@@ -321,7 +321,49 @@ func (m *PublicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filt
 	return links, nil
 }
 
-func (m *PublicShareMgr) GetPublicLink(ctx context.Context, u *user.User, ref *link.PublicShareReference, filter bool) (*model.PublicLink, error) {
+// TransferPublicShare transfers a publicshare to a new initiator. Only to be used for shares in projects.
+func (m *PublicShareMgr) TransferPublicShare(ctx context.Context, ref *link.PublicShareReference, newInitiator string) error {
+	if newInitiator == "" {
+		return errors.New("Must pass a non-nil initiator")
+	}
+
+	link, err := m.getEmptyPLByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	res := m.db.Model(&link).Update("uid_initiator", newInitiator)
+	if res.Error != nil {
+		return res.Error
+	}
+	return nil
+}
+
+// MovePublicShare moves a PublicShare to a new location, also updating its owner. It is the reponsibility of the caller to ensure that `newOwner`
+// corresponds to the owner of `newLocation`
+func (m *PublicShareMgr) MovePublicShare(ctx context.Context, ref *link.PublicShareReference, newLocation *provider.ResourceId, newOwner string) error {
+	if newOwner == "" {
+		return errors.New("Must pass a non-nil owner")
+	}
+
+	if newLocation.OpaqueId == "" || newLocation.StorageId == "" {
+		return errors.New("Must pass a non-nil location")
+	}
+
+	link, err := m.getEmptyPLByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	res := m.db.Model(&link).Update("uid_owner", newOwner).Update("inode", newLocation.OpaqueId).Update("instance", newLocation.StorageId)
+	if res.Error != nil {
+		return res.Error
+	}
+
+	return nil
+}
+
+func (m *PublicShareMgr) GetPublicLink(ctx context.Context, ref *link.PublicShareReference, filter bool) (*model.PublicLink, error) {
 	var ln *model.PublicLink
 	var err error
 	switch {
@@ -439,14 +481,14 @@ func emptyLinkWithId(id string) (*model.PublicLink, error) {
 	if err != nil {
 		return nil, err
 	}
-	share := &model.PublicLink{
+	link := &model.PublicLink{
 		ProtoShare: model.ProtoShare{
 			BaseModel: model.BaseModel{
 				Id: uint(intId),
 			},
 		},
 	}
-	return share, nil
+	return link, nil
 }
 
 func (m *PublicShareMgr) appendLinkFiltersToQuery(query *gorm.DB, filters []*link.ListPublicSharesRequest_Filter) {
