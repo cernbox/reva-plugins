@@ -112,6 +112,10 @@ func (m *manager) findCachedUsers(query string) ([]*userpb.User, error) {
 			args = append(args, k)
 		}
 
+		if len(args) == 0 {
+			return []*userpb.User{}, nil
+		}
+
 		// Fetch the users for all these keys
 		userStrings, err := redis.Strings(conn.Do("MGET", args...))
 		if err != nil {
