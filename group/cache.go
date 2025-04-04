@@ -120,6 +120,10 @@ func (m *manager) findCachedGroups(query string) ([]*grouppb.Group, error) {
 			args = append(args, k)
 		}
 
+		if len(args) == 0 {
+			return []*grouppb.Group{}, nil
+		}
+
 		// Fetch the groups for all these keys
 		groupStrings, err := redis.Strings(conn.Do("MGET", args...))
 		if err != nil {
