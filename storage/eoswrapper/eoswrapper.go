@@ -47,8 +47,9 @@ const (
 	eosProjectsNamespace = "/eos/project"
 
 	// We can use a regex for these, but that might have inferior performance.
-	projectSpaceGroupsPrefix      = "cernbox-project-"
-	projectSpaceAdminGroupsSuffix = "-admins"
+	projectSpaceGroupsPrefix       = "cernbox-project-"
+	projectSpaceAdminsGroupSuffix  = "-admins"
+	projectSpaceWritersGroupSuffix = "-writers"
 )
 
 type wrapper struct {
@@ -138,7 +139,7 @@ func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKey
 }
 
 func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([]*provider.FileVersion, error) {
-	if err := w.userIsProjectAdmin(ctx, ref); err != nil {
+	if err := w.userIsProjectWriter(ctx, ref); err != nil {
 		return nil, err
 	}
 
@@ -146,7 +147,7 @@ func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([
 }
 
 func (w *wrapper) DownloadRevision(ctx context.Context, ref *provider.Reference, revisionKey string) (io.ReadCloser, error) {
-	if err := w.userIsProjectAdmin(ctx, ref); err != nil {
+	if err := w.userIsProjectWriter(ctx, ref); err != nil {
 		return nil, err
 	}
 
@@ -154,7 +155,7 @@ func (w *wrapper) DownloadRevision(ctx context.Context, ref *provider.Reference,
 }
 
 func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, revisionKey string) error {
-	if err := w.userIsProjectAdmin(ctx, ref); err != nil {
+	if err := w.userIsProjectWriter(ctx, ref); err != nil {
 		return err
 	}
 
@@ -194,7 +195,7 @@ func (w *wrapper) setProjectSharingPermissions(ctx context.Context, r *provider.
 			// Nothing to do in that case
 			return nil
 		}
-		adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminGroupsSuffix
+		adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminsGroupSuffix
 		user := appctx.ContextMustGetUser(ctx)
 
 		_, isPublicShare := utils.HasPublicShareRole(user)
@@ -234,7 +235,37 @@ func (w *wrapper) userIsProjectAdmin(ctx context.Context, ref *provider.Referenc
 		// Nothing to do in that case
 		return nil
 	}
-	adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminGroupsSuffix
+	adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminsGroupSuffix
+	user := appctx.ContextMustGetUser(ctx)
+
+	for _, g := range user.Groups {
+		if g == adminGroup {
+			return nil
+		}
+	}
+
+	return errtypes.PermissionDenied("eosfs: project spaces revisions can only be accessed by admins")
+}
+
+func (w *wrapper) userIsProjectWriter(ctx context.Context, ref *provider.Reference) error {
+	// Check if this storage provider corresponds to a project spaces instance
+	if !strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+		return nil
+	}
+
+	res, err := w.GetMD(ctx, ref, nil)
+	if err != nil {
+		return err
+	}
+
+	// Extract project name from the path resembling /c/cernbox or /c/cernbox/minutes/..
+	parts := strings.SplitN(res.Path, "/", 4)
+	if len(parts) != 4 && len(parts) != 3 {
+		// The request might be for / or /$letter
+		// Nothing to do in that case
+		return nil
+	}
+	adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceWritersGroupSuffix
 	user := appctx.ContextMustGetUser(ctx)
 
 	for _, g := range user.Groups {
