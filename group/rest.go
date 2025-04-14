@@ -157,9 +157,7 @@ type Group struct {
 // when getting the list of groups.
 type GroupsResponse struct {
 	Pagination struct {
-		Links struct {
-			Next *string `json:"next"`
-		} `json:"links"`
+		Next *string `json:"next"`
 	} `json:"pagination"`
 	Data []*Group `json:"data"`
 }
@@ -182,10 +180,10 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 			}
 		}
 
-		if r.Pagination.Links.Next == nil {
+		if r.Pagination.Next == nil {
 			break
 		}
-		url = fmt.Sprintf("%s%s", m.conf.APIBaseURL, *r.Pagination.Links.Next)
+		url = fmt.Sprintf("%s%s", m.conf.APIBaseURL, *r.Pagination.Next)
 	}
 
 	return nil
