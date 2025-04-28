@@ -281,5 +281,5 @@ func (w *wrapper) userIsProjectWriter(ctx context.Context, ref *provider.Referen
 		}
 	}
 
-	return errtypes.PermissionDenied("eosfs: project spaces revisions can only be accessed by admins")
+	return errtypes.PermissionDenied("eosfs: project spaces revisions can only be accessed by writers or admins")
 }
