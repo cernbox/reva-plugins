@@ -127,3 +127,14 @@ func (w *wrapper) getMountID(ctx context.Context, r *provider.ResourceInfo) stri
 	}
 	return b.String()
 }
+
+func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error) {
+	res, err := w.FSWithListRegexSupport.ListWithRegex(ctx, path, regex, depth, user)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range res {
+		r.Id.StorageId = w.getMountID(ctx, r)
+	}
+	return res, nil
+}
