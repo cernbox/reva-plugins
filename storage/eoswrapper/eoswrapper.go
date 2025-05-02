@@ -166,7 +166,7 @@ func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, 
 		return err
 	}
 
-	return w.RestoreRevision(ctx, ref, revisionKey)
+	return w.FSWithListRegexSupport.RestoreRevision(ctx, ref, revisionKey)
 }
 
 func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *provider.Grantee) error {
