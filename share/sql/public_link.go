@@ -173,9 +173,16 @@ func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 			Where("id = ?", publiclink.Id).
 			Update("permissions", uint8(permissions))
 	case link.UpdatePublicShareRequest_Update_TYPE_EXPIRATION:
-		res = m.db.Model(&publiclink).
-			Where("id = ?", publiclink.Id).
-			Update("expiration", time.Unix(int64(req.Update.GetGrant().Expiration.Seconds), 0))
+		if req.Update.GetGrant().Expiration == nil {
+			res = m.db.Model(&publiclink).
+				Where("id = ?", publiclink.Id).
+				Update("expiration", nil)
+		} else {
+			res = m.db.Model(&publiclink).
+				Where("id = ?", publiclink.Id).
+				Update("expiration", time.Unix(int64(req.Update.GetGrant().Expiration.Seconds), 0))
+		}
+
 	case link.UpdatePublicShareRequest_Update_TYPE_PASSWORD:
 		if req.Update.GetGrant().Password == "" {
 			// Remove the password
