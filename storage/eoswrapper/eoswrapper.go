@@ -27,6 +27,7 @@ import (
 
 	"github.com/Masterminds/sprig"
 	"github.com/cernbox/reva-plugins/storage/eoshomewrapper"
+	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva"
 	"github.com/cs3org/reva/pkg/appctx"
@@ -282,4 +283,15 @@ func (w *wrapper) userIsProjectWriter(ctx context.Context, ref *provider.Referen
 	}
 
 	return errtypes.PermissionDenied("eosfs: project spaces revisions can only be accessed by writers or admins")
+}
+
+func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error) {
+	res, err := w.FSWithListRegexSupport.ListWithRegex(ctx, path, regex, depth, user)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range res {
+		r.Id.StorageId = w.getMountID(ctx, r)
+	}
+	return res, nil
 }
