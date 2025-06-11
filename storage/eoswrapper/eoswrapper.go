@@ -117,6 +117,7 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	// Take the first letter of the resource path after the namespace has been removed.
 	// If it's empty, leave it empty to be filled by storageprovider.
 	res.Id.StorageId = w.getMountID(ctx, res)
+	res.ParentId.StorageId = w.getMountID(ctx, res)
 
 	if err = w.setProjectSharingPermissions(ctx, res); err != nil {
 		return nil, err
@@ -132,6 +133,7 @@ func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKey
 	}
 	for _, r := range res {
 		r.Id.StorageId = w.getMountID(ctx, r)
+		r.ParentId.StorageId = w.getMountID(ctx, r)
 		if err = w.setProjectSharingPermissions(ctx, r); err != nil {
 			continue
 		}
@@ -292,6 +294,7 @@ func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth u
 	}
 	for _, r := range res {
 		r.Id.StorageId = w.getMountID(ctx, r)
+		r.ParentId.StorageId = w.getMountID(ctx, r)
 	}
 	return res, nil
 }
