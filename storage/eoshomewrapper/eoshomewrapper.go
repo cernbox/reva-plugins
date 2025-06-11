@@ -101,6 +101,8 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	// Take the first letter of the username of the logged-in user, as the home
 	// storage provider restricts requests only to the home namespace.
 	res.Id.StorageId = w.getMountID(ctx, res)
+	res.ParentId.StorageId = w.getMountID(ctx, res)
+
 	return res, nil
 }
 
@@ -111,6 +113,7 @@ func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKey
 	}
 	for _, r := range res {
 		r.Id.StorageId = w.getMountID(ctx, r)
+		r.ParentId.StorageId = w.getMountID(ctx, r)
 	}
 	return res, nil
 }
@@ -135,6 +138,7 @@ func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth u
 	}
 	for _, r := range res {
 		r.Id.StorageId = w.getMountID(ctx, r)
+		r.ParentId.StorageId = w.getMountID(ctx, r)
 	}
 	return res, nil
 }
