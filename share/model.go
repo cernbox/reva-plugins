@@ -106,7 +106,7 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 	updateTs := &typespb.Timestamp{
 		Seconds: uint64(s.UpdatedAt.Unix()),
 	}
-	return &collaboration.Share{
+	share := &collaboration.Share{
 		Id: &collaboration.ShareId{
 			OpaqueId: strconv.FormatUint(uint64(s.Id), 10),
 		},
@@ -123,6 +123,14 @@ func (s *Share) AsCS3Share(granteeType userpb.UserType) *collaboration.Share {
 		Mtime:       updateTs,
 		Description: s.Description,
 	}
+
+	if s.Expiration.Valid {
+		share.Expiration = &typespb.Timestamp{
+			Seconds: uint64(s.Expiration.V.Unix()),
+		}
+	}
+
+	return share
 }
 
 func (s *Share) AsCS3ReceivedShare(state *ShareState, granteeType userpb.UserType) *collaboration.ReceivedShare {

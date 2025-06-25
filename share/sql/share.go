@@ -22,6 +22,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	model "github.com/cernbox/reva-plugins/share"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
@@ -145,6 +146,10 @@ func (m *ShareMgr) Share(ctx context.Context, md *provider.ResourceInfo, g *coll
 	share.Permissions = uint8(conversions.SharePermToInt(g.Permissions.Permissions))
 	share.Orphan = false
 
+	if g.Expiration != nil {
+		share.Expiration.Scan(time.Unix(int64(g.Expiration.Seconds), 0))
+	}
+
 	res := m.db.Save(&share)
 	if res.Error != nil {
 		return nil, res.Error
@@ -175,16 +180,21 @@ func (m *ShareMgr) Unshare(ctx context.Context, ref *collaboration.ShareReferenc
 	return res.Error
 }
 
-func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, p *collaboration.SharePermissions) (*collaboration.Share, error) {
+func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareReference, req *collaboration.UpdateShareRequest) (*collaboration.Share, error) {
 	share, err := m.getEmptyShareByRef(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
 
-	permissions := conversions.SharePermToInt(p.Permissions)
-	res := m.db.Model(&share).Where("id = ?", share.Id).Update("permissions", uint8(permissions))
-	if res.Error != nil {
-		return nil, res.Error
+	switch req.Field.GetField().(type) {
+	case *collaboration.UpdateShareRequest_UpdateField_Permissions:
+		permissions := conversions.SharePermToInt(req.Field.GetPermissions().Permissions)
+		res := m.db.Model(&share).Where("id = ?", share.Id).Update("permissions", uint8(permissions))
+		if res.Error != nil {
+			return nil, res.Error
+		}
+	case *collaboration.UpdateShareRequest_UpdateField_DisplayName:
+		// Our shares don't support display names at the moment ...
 	}
 
 	return m.GetShare(ctx, ref)
