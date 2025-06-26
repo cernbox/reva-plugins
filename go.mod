@@ -7,10 +7,10 @@ toolchain go1.24.2
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
 	github.com/bluele/gcache v0.0.2
-	github.com/cs3org/go-cs3apis v0.0.0-20250218144737-544dd3919658
+	github.com/cs3org/go-cs3apis v0.0.0-20250626104136-a0b31b323c48
 	github.com/cs3org/reva v1.27.0
 	github.com/disintegration/imaging v1.6.2
-	github.com/go-chi/chi/v5 v5.2.1
+	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gomodule/redigo v1.9.2
 	github.com/juliangruber/go-intersect v1.1.0
@@ -43,7 +43,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.26.0 // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
-	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
