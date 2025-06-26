@@ -481,8 +481,14 @@ func TestUpdateShare(t *testing.T) {
 		Spec: &collaboration.ShareReference_Id{
 			Id: share.Id,
 		},
-	}, &collaboration.SharePermissions{
-		Permissions: conversions.IntTosharePerm(newPermissions, "file"),
+	}, &collaboration.UpdateShareRequest{
+		Field: &collaboration.UpdateShareRequest_UpdateField{
+			Field: &collaboration.UpdateShareRequest_UpdateField_Permissions{
+				Permissions: &collaboration.SharePermissions{
+					Permissions: conversions.IntTosharePerm(newPermissions, "file"),
+				},
+			},
+		},
 	})
 	if err != nil {
 		t.Error(err)

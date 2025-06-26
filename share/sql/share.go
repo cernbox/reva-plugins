@@ -195,6 +195,20 @@ func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 		}
 	case *collaboration.UpdateShareRequest_UpdateField_DisplayName:
 		// Our shares don't support display names at the moment ...
+	case *collaboration.UpdateShareRequest_UpdateField_Expiration:
+		expiration := req.Field.GetExpiration()
+		if expiration == nil {
+			res := m.db.Model(&share).Where("id = ?", share.Id).Update("expiration", nil)
+			if res.Error != nil {
+				return nil, res.Error
+			}
+		} else {
+			res := m.db.Model(&share).Where("id = ?", share.Id).Update("expiration", time.Unix(int64(expiration.Seconds), 0))
+			if res.Error != nil {
+				return nil, res.Error
+			}
+		}
+
 	}
 
 	return m.GetShare(ctx, ref)
