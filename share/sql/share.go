@@ -391,6 +391,19 @@ func (m *ShareMgr) TransferShare(ctx context.Context, ref *collaboration.ShareRe
 	return nil
 }
 
+func (m *ShareMgr) MarkAsOrphaned(ctx context.Context, ref *collaboration.ShareReference) (error) {
+	share, err := m.getEmptyShareByRef(ctx, ref)
+	if err != nil {
+		return err
+	}
+
+	res := m.db.Model(&share).Where("id = ?", share.Id).Update("orphan", true)
+	if res.Error != nil {
+		return res.Error
+	}
+
+	return nil
+}
 // Move share moves a share to a new location, also updating its owner. It is the reponsibility of the caller to ensure that `newOwner`
 // corresponds to the owner of `newLocation`
 func (m *ShareMgr) MoveShare(ctx context.Context, ref *collaboration.ShareReference, newLocation *provider.ResourceId, newOwner string) error {
