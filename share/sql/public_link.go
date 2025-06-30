@@ -149,14 +149,7 @@ func (m *PublicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 }
 
 func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, req *link.UpdatePublicShareRequest, g *link.Grant) (*link.PublicShare, error) {
-	var publiclink *model.PublicLink
-	var err error
-
-	if id := req.Ref.GetId(); id != nil {
-		publiclink, err = emptyLinkWithId(id.OpaqueId)
-	} else {
-		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), false)
-	}
+	publiclink, err := m.getPublicLink(ctx, req.Ref)
 	if err != nil {
 		return nil, err
 	}
@@ -221,28 +214,13 @@ func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	return m.GetPublicShare(ctx, u, req.Ref, true)
 }
 
-func (m *PublicShareMgr) MarkAsOrphaned(ctx context.Context, req *link.UpdatePublicShareRequest) error {
-	var publiclink *model.PublicLink
-	var err error
-
-	if id := req.Ref.GetId(); id != nil {
-		publiclink, err = emptyLinkWithId(id.OpaqueId)
-	} else {
-		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), false)
-	}
+func (m *PublicShareMgr) MarkAsOrphaned(ctx context.Context, ref *link.PublicShareReference) error {
+	publicLink, err := m.getPublicLink(ctx, ref)
 	if err != nil {
 		return err
 	}
-
-	res := m.db.Model(&publiclink).
-		Where("id = ?", publiclink.Id).
-		Update("orphan", true)
-
-	if res.Error != nil {
-		return res.Error
-	}
-
-	return nil
+	res := m.db.Model(&publicLink).Where("id = ?", publicLink.Id).Update("orphan", true)
+	return res.Error
 }
 
 func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
@@ -408,6 +386,21 @@ func (m *PublicShareMgr) GetPublicLink(ctx context.Context, ref *link.PublicShar
 	}
 
 	return ln, nil
+}
+
+// Performs similarly to GetPublicLink but instead attempts to reduce the number of DB calls by creating a empty link containing only ID
+func (m *PublicShareMgr) getPublicLink(ctx context.Context, ref *link.PublicShareReference) (*model.PublicLink, error) {
+	var publiclink *model.PublicLink
+	var err error
+	if id := ref.GetId(); id != nil {
+		publiclink, err = emptyLinkWithId(id.OpaqueId)
+	} else {
+		publiclink, err = m.getLinkByToken(ctx, ref.GetToken(), false)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return publiclink, nil
 }
 
 // Get Link by ID. Does not return orphans or expired links if filter is set to true.
