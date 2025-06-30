@@ -234,8 +234,7 @@ func (m *PublicShareMgr) MarkAsOrphaned(ctx context.Context, req *link.UpdatePub
 		return err
 	}
 
-	var res *gorm.DB
-	res = m.db.Model(&publiclink).
+	res := m.db.Model(&publiclink).
 		Where("id = ?", publiclink.Id).
 		Update("orphan", true)
 
