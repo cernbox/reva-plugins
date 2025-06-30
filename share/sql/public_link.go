@@ -221,6 +221,31 @@ func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 	return m.GetPublicShare(ctx, u, req.Ref, true)
 }
 
+func (m *PublicShareMgr) MarkAsOrphaned(ctx context.Context, req *link.UpdatePublicShareRequest) error {
+	var publiclink *model.PublicLink
+	var err error
+
+	if id := req.Ref.GetId(); id != nil {
+		publiclink, err = emptyLinkWithId(id.OpaqueId)
+	} else {
+		publiclink, err = m.getLinkByToken(ctx, req.Ref.GetToken(), false)
+	}
+	if err != nil {
+		return err
+	}
+
+	var res *gorm.DB
+	res = m.db.Model(&publiclink).
+		Where("id = ?", publiclink.Id).
+		Update("orphan", true)
+
+	if res.Error != nil {
+		return res.Error
+	}
+
+	return nil
+}
+
 func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *link.PublicShareReference, sign bool) (*link.PublicShare, error) {
 	var ln *model.PublicLink
 	var err error
