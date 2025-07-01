@@ -149,7 +149,7 @@ func (m *PublicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md
 }
 
 func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, req *link.UpdatePublicShareRequest, g *link.Grant) (*link.PublicShare, error) {
-	publiclink, err := m.getPublicLink(ctx, req.Ref)
+	publiclink, err := m.getEmptyPublicLink(ctx, req.Ref)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (m *PublicShareMgr) UpdatePublicShare(ctx context.Context, u *user.User, re
 }
 
 func (m *PublicShareMgr) MarkAsOrphaned(ctx context.Context, ref *link.PublicShareReference) error {
-	publicLink, err := m.getPublicLink(ctx, ref)
+	publicLink, err := m.getEmptyPublicLink(ctx, ref)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func (m *PublicShareMgr) GetPublicLink(ctx context.Context, ref *link.PublicShar
 }
 
 // Performs similarly to GetPublicLink but instead attempts to reduce the number of DB calls by creating a empty link containing only ID
-func (m *PublicShareMgr) getPublicLink(ctx context.Context, ref *link.PublicShareReference) (*model.PublicLink, error) {
+func (m *PublicShareMgr) getEmptyPublicLink(ctx context.Context, ref *link.PublicShareReference) (*model.PublicLink, error) {
 	var publiclink *model.PublicLink
 	var err error
 	if id := ref.GetId(); id != nil {
