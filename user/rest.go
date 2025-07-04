@@ -28,12 +28,12 @@ import (
 	"time"
 
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
-	"github.com/cs3org/reva"
-	"github.com/cs3org/reva/pkg/appctx"
-	utils "github.com/cs3org/reva/pkg/cbox/utils"
-	"github.com/cs3org/reva/pkg/user"
-	"github.com/cs3org/reva/pkg/utils/cfg"
-	"github.com/cs3org/reva/pkg/utils/list"
+	"github.com/cs3org/reva/v3"
+	"github.com/cs3org/reva/v3/pkg/appctx"
+	utils "github.com/cs3org/reva/v3/pkg/cbox/utils"
+	"github.com/cs3org/reva/v3/pkg/user"
+	"github.com/cs3org/reva/v3/pkg/utils/cfg"
+	"github.com/cs3org/reva/v3/pkg/utils/list"
 	"github.com/gomodule/redigo/redis"
 	"github.com/rs/zerolog/log"
 )

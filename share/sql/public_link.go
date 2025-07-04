@@ -29,13 +29,13 @@ import (
 	user "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	link "github.com/cs3org/go-cs3apis/cs3/sharing/link/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
-	"github.com/cs3org/reva"
-	"github.com/cs3org/reva/pkg/appctx"
-	conversions "github.com/cs3org/reva/pkg/cbox/utils"
-	"github.com/cs3org/reva/pkg/errtypes"
-	"github.com/cs3org/reva/pkg/publicshare"
-	"github.com/cs3org/reva/pkg/utils"
-	"github.com/cs3org/reva/pkg/utils/cfg"
+	"github.com/cs3org/reva/v3"
+	"github.com/cs3org/reva/v3/pkg/appctx"
+	conversions "github.com/cs3org/reva/v3/pkg/cbox/utils"
+	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/publicshare"
+	"github.com/cs3org/reva/v3/pkg/utils"
+	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/datatypes"
@@ -81,7 +81,7 @@ func NewPublicShareManager(ctx context.Context, m map[string]interface{}) (publi
 	return mgr, nil
 }
 
-// These follow the interface defined in github.com/cs3org/reva/pkg/publishare/publicshare.go
+// These follow the interface defined in github.com/cs3org/reva/v3/pkg/publishare/publicshare.go
 
 func (m *PublicShareMgr) CreatePublicShare(ctx context.Context, u *user.User, md *provider.ResourceInfo, g *link.Grant, description string, internal bool, notifyUploads bool, notifyUploadsExtraRecipients string) (*link.PublicShare, error) {
 	user := appctx.ContextMustGetUser(ctx)

@@ -29,14 +29,14 @@ import (
 	"github.com/cernbox/reva-plugins/storage/eoshomewrapper"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
-	"github.com/cs3org/reva"
-	"github.com/cs3org/reva/pkg/appctx"
-	"github.com/cs3org/reva/pkg/errtypes"
-	"github.com/cs3org/reva/pkg/storage"
-	"github.com/cs3org/reva/pkg/storage/fs/registry"
-	"github.com/cs3org/reva/pkg/storage/utils/eosfs"
-	"github.com/cs3org/reva/pkg/utils"
-	"github.com/cs3org/reva/pkg/utils/cfg"
+	"github.com/cs3org/reva/v3"
+	"github.com/cs3org/reva/v3/pkg/appctx"
+	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/storage"
+	"github.com/cs3org/reva/v3/pkg/storage/fs/registry"
+	"github.com/cs3org/reva/v3/pkg/storage/utils/eosfs"
+	"github.com/cs3org/reva/v3/pkg/utils"
+	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 )
 
 func init() {
@@ -53,7 +53,7 @@ const (
 	projectSpaceWritersGroupSuffix = "-writers"
 	projectSpaceReadersGroupSuffix = "-readers"
 
-	requireAdmin = 2
+	requireAdmin  = 2
 	requireWriter = 1
 	requireReader = 0
 )
@@ -251,7 +251,7 @@ func (w *wrapper) userIsProjectMember(ctx context.Context, ref *provider.Referen
 
 	for _, g := range user.Groups {
 		if (g == adminsGroup && requiredLevel <= requireAdmin) ||
-			(g == writersGroup && requiredLevel <= requireWriter) || 
+			(g == writersGroup && requiredLevel <= requireWriter) ||
 			(g == readersGroup && requiredLevel <= requireReader) {
 			// User is a project member with sufficient permissions
 			return nil

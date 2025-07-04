@@ -27,8 +27,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cs3org/reva/pkg/errtypes"
-	"github.com/cs3org/reva/pkg/httpclient"
+	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/httpclient"
 	"github.com/pkg/errors"
 )
 

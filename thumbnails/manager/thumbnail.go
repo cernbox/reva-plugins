@@ -26,9 +26,9 @@ import (
 
 	"github.com/cernbox/reva-plugins/thumbnails/cache"
 	"github.com/cernbox/reva-plugins/thumbnails/cache/registry"
-	"github.com/cs3org/reva/pkg/errtypes"
-	"github.com/cs3org/reva/pkg/mime"
-	"github.com/cs3org/reva/pkg/storage/utils/downloader"
+	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/mime"
+	"github.com/cs3org/reva/v3/pkg/storage/utils/downloader"
 	"github.com/disintegration/imaging"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
