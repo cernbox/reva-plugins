@@ -10,9 +10,9 @@ import (
 	link "github.com/cs3org/go-cs3apis/cs3/sharing/link/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	typespb "github.com/cs3org/go-cs3apis/cs3/types/v1beta1"
-	"github.com/cs3org/reva/pkg/appctx"
-	conversions "github.com/cs3org/reva/pkg/cbox/utils"
-	publicshare "github.com/cs3org/reva/pkg/publicshare"
+	"github.com/cs3org/reva/v3/pkg/appctx"
+	conversions "github.com/cs3org/reva/v3/pkg/cbox/utils"
+	publicshare "github.com/cs3org/reva/v3/pkg/publicshare"
 )
 
 func setupSuiteLinks(tb testing.TB) (publicshare.Manager, error, func(tb testing.TB)) {

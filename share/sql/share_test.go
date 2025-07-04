@@ -12,9 +12,9 @@ import (
 	collaboration "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	typesv1beta1 "github.com/cs3org/go-cs3apis/cs3/types/v1beta1"
-	"github.com/cs3org/reva/pkg/appctx"
-	conversions "github.com/cs3org/reva/pkg/cbox/utils"
-	revashare "github.com/cs3org/reva/pkg/share"
+	"github.com/cs3org/reva/v3/pkg/appctx"
+	conversions "github.com/cs3org/reva/v3/pkg/cbox/utils"
+	revashare "github.com/cs3org/reva/v3/pkg/share"
 	"google.golang.org/genproto/protobuf/field_mask"
 )
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	model "github.com/cernbox/reva-plugins/share"
-	"github.com/cs3org/reva"
+	"github.com/cs3org/reva/v3"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
