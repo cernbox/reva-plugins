@@ -257,6 +257,10 @@ func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 
 // List public shares that match the given filters
 func (m *PublicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
+<<<<<<< HEAD
+=======
+
+>>>>>>> b26bfd0 (Modified public links and sharing to have identical function headers + removed unnecessary ctx passing)
 	links, err := m.ListPublicLinks(u, filters, false)
 	if err != nil {
 		return nil, err
@@ -315,7 +319,6 @@ func (m *PublicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 // Note: this method provides a the option to filter for orphaned files
 
 func (m *PublicShareMgr) ListPublicLinks(u *user.User, filters []*link.ListPublicSharesRequest_Filter, remove_orphan bool) ([]model.PublicLink, error) {
-
 	query := m.db.Model(&model.PublicLink{})
 
 	if remove_orphan {
