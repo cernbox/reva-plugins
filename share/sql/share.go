@@ -216,10 +216,7 @@ func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 }
 
 func (m *ShareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	user, ok := appctx.ContextGetUser(ctx)
-	if !ok {
-		user = nil
-	}
+	user, _ := appctx.ContextGetUser(ctx)
 
 	shares, err := m.ListModelShares(user, filters, false)
 	if err != nil {
