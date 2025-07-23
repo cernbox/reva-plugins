@@ -50,6 +50,11 @@ type PublicShareMgr struct {
 	db *gorm.DB
 }
 
+type ExpiryRange struct {
+	From time.Time
+	To   time.Time
+}
+
 func (PublicShareMgr) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.publicshareprovider.drivers.sql",
@@ -252,7 +257,7 @@ func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 
 // List public shares that match the given filters
 func (m *PublicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
-	links, err := m.ListPublicLinks(ctx, u, filters, md, sign)
+	links, err := m.ListPublicLinks(ctx, u, filters, md, nil, sign)
 	if err != nil {
 		return nil, err
 	}
@@ -308,12 +313,16 @@ func (m *PublicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 
 // List public links in the CERN-specific format. Used in cernboxcop.
 // Note: this method does not filter for orphaned or expired links!
-func (m *PublicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]model.PublicLink, error) {
+func (m *PublicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, expiry *ExpiryRange, sign bool) ([]model.PublicLink, error) {
 	query := m.db.Model(&model.PublicLink{})
 
 	if u != nil {
 		uid := conversions.FormatUserID(u.Id)
 		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
+	}
+
+	if expiry != nil {
+		query = query.Where("expiration >= ? and expiration <= ?", expiry.From, expiry.To)
 	}
 
 	// Append filters
