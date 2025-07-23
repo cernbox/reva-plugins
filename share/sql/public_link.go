@@ -257,11 +257,7 @@ func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 
 // List public shares that match the given filters
 func (m *PublicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
-<<<<<<< HEAD
-=======
-
->>>>>>> b26bfd0 (Modified public links and sharing to have identical function headers + removed unnecessary ctx passing)
-	links, err := m.ListPublicLinks(u, filters, false)
+	links, err := m.ListPublicLinks(ctx, u, filters, md, sign)
 	if err != nil {
 		return nil, err
 	}
