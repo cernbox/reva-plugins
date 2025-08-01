@@ -314,7 +314,6 @@ func (m *PublicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 // Exported functions below are not part of the CS3-defined API, but are used by cernboxcop
 
 // List public links in the CERN-specific format. Used in cernboxcop.
-// Note: this method provides a the option to filter for orphaned files
 
 func (m *PublicShareMgr) ListPublicLinks(u *user.User, filters []*link.ListPublicSharesRequest_Filter, expiry *ExpiryRange, remove_orphan bool) ([]model.PublicLink, error) {
 
