@@ -25,6 +25,7 @@ import (
 	"time"
 
 	model "github.com/cernbox/reva-plugins/share"
+	user "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
 	collaboration "github.com/cs3org/go-cs3apis/cs3/sharing/collaboration/v1beta1"
@@ -215,7 +216,9 @@ func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 }
 
 func (m *ShareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	shares, err := m.ListModelShares(ctx, filters)
+	user, _ := appctx.ContextGetUser(ctx)
+
+	shares, err := m.ListModelShares(user, filters, false)
 	if err != nil {
 		return nil, err
 	}
@@ -354,11 +357,13 @@ func (m *ShareMgr) UpdateReceivedShare(ctx context.Context, recvShare *collabora
 // Exported functions below are not part of the CS3-defined API, but are used by cernboxcop
 
 // Used by cernboxcop, to include listings with orphans (which cannot be represented in the CS3 Shares)
-func (m *ShareMgr) ListModelShares(ctx context.Context, filters []*collaboration.Filter) ([]model.Share, error) {
-	query := m.db.Model(&model.Share{}).
-		Where("orphan = ?", false)
+func (m *ShareMgr) ListModelShares(u *user.User, filters []*collaboration.Filter, remove_orphan bool) ([]model.Share, error) {
+	query := m.db.Model(&model.Share{})
+	if remove_orphan {
+		query = query.Where("orphan = ?", false)
+	}
 
-	if u, ok := appctx.ContextGetUser(ctx); ok {
+	if u != nil {
 		uid := conversions.FormatUserID(u.Id)
 		query = query.Where("uid_owner = ? or uid_initiator = ?", uid, uid)
 	}

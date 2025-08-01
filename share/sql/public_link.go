@@ -257,7 +257,9 @@ func (m *PublicShareMgr) GetPublicShare(ctx context.Context, u *user.User, ref *
 
 // List public shares that match the given filters
 func (m *PublicShareMgr) ListPublicShares(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, sign bool) ([]*link.PublicShare, error) {
-	links, err := m.ListPublicLinks(ctx, u, filters, md, nil, sign)
+
+	links, err := m.ListPublicLinks(u, filters, nil, false)
+
 	if err != nil {
 		return nil, err
 	}
@@ -312,9 +314,14 @@ func (m *PublicShareMgr) GetPublicShareByToken(ctx context.Context, token string
 // Exported functions below are not part of the CS3-defined API, but are used by cernboxcop
 
 // List public links in the CERN-specific format. Used in cernboxcop.
-// Note: this method does not filter for orphaned or expired links!
-func (m *PublicShareMgr) ListPublicLinks(ctx context.Context, u *user.User, filters []*link.ListPublicSharesRequest_Filter, md *provider.ResourceInfo, expiry *ExpiryRange, sign bool) ([]model.PublicLink, error) {
+
+func (m *PublicShareMgr) ListPublicLinks(u *user.User, filters []*link.ListPublicSharesRequest_Filter, expiry *ExpiryRange, remove_orphan bool) ([]model.PublicLink, error) {
+
 	query := m.db.Model(&model.PublicLink{})
+
+	if remove_orphan {
+		query = query.Where("orphan = ?", false)
+	}
 
 	if u != nil {
 		uid := conversions.FormatUserID(u.Id)
