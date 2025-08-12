@@ -82,7 +82,7 @@ func (s *Otg) Handler() http.Handler {
 			return
 		}
 
-		msg, err := s.getOTG(r.Context())
+		num, msg, err := s.getOTG(r.Context())
 		if err != nil {
 			var code int
 			if errors.Is(err, sql.ErrNoRows) {
@@ -94,14 +94,16 @@ func (s *Otg) Handler() http.Handler {
 			return
 		}
 
-		encodeMessageAndSend(w, msg)
+		encodeMessageAndSend(w, num, msg)
 	})
 }
 
-func encodeMessageAndSend(w http.ResponseWriter, msg string) {
+func encodeMessageAndSend(w http.ResponseWriter, num string, msg string) {
 	res := struct {
+		Number  string `json:"number"`
 		Message string `json:"message"`
 	}{
+		Number:  num,
 		Message: msg,
 	}
 	data, err := json.Marshal(&res)
@@ -113,16 +115,17 @@ func encodeMessageAndSend(w http.ResponseWriter, msg string) {
 	w.Write(data)
 }
 
-func (s *Otg) getOTG(ctx context.Context) (string, error) {
-	row := s.db.QueryRowContext(ctx, "SELECT message FROM cbox_otg_ocis")
+func (s *Otg) getOTG(ctx context.Context) (string, string, error) {
+	row := s.db.QueryRowContext(ctx, "SELECT otg_number, message FROM cbox_otg_ocis")
 	if row.Err() != nil {
-		return "", row.Err()
+		return "", "", row.Err()
 	}
 
+	var num string
 	var msg string
-	if err := row.Scan(&msg); err != nil {
-		return "", err
+	if err := row.Scan(&num, &msg); err != nil {
+		return "", "", err
 	}
 
-	return msg, nil
+	return num, msg, nil
 }
