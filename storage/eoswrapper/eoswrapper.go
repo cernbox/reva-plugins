@@ -21,7 +21,9 @@ package eoswrapper
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"os"
 	"strings"
 	"text/template"
 
@@ -129,6 +131,57 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	}
 
 	return res, nil
+}
+
+func (w *wrapper) GetQuota(ctx context.Context, ref *provider.Reference) (totalbytes, usedbytes uint64, err error) {
+	// Check if this storage provider corresponds to a non-project instance
+	if !strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+		// If so, we do the normal GetQuota (i.e. on the username and the root node, such as /eos/user)
+		return w.getOldStyleQuota(ctx, ref)
+	}
+
+	// If it is a project, we try to fetch the new-style project quota
+	// This means, with GID 99 and on the project root (/eos/project/n/name) instead of the root node (/eos/project)
+
+	// Get context with GID 99
+	user, ok := appctx.ContextGetUser(ctx)
+	if !ok {
+		return 0, 0, errors.New("no user found in context")
+	}
+	gidctx := ctx
+	appctx.ContextSetUser(gidctx, &userpb.User{
+		Id:        user.Id,
+		UidNumber: user.UidNumber,
+		GidNumber: 99,
+	})
+
+	// Get project root
+	// Length 3 becuase this is the path relative to the namespace, so
+	// for /eos/project/c/cernbox, this would be /c/cernbox
+	paths := strings.Split(ref.Path, string(os.PathSeparator))
+	if len(paths) < 3 {
+		return w.getOldStyleQuota(ctx, ref)
+	}
+	path := strings.Join(paths[:3], string(os.PathSeparator))
+
+	total, used, err := w.FSWithListRegexSupport.GetQuota(gidctx, &provider.Reference{
+		Path: path,
+	})
+	if err != nil || total == 0 && used == 0 {
+		// Getting new-style quota failed, so we fall back to the old style way
+		return w.getOldStyleQuota(ctx, ref)
+	}
+
+	return total, used, nil
+
+}
+
+// Old style quota means we take the quota set for the username in the context, on the quota node specified in the config
+// Typically, this is /eos/project or /eos/user
+func (w *wrapper) getOldStyleQuota(ctx context.Context, ref *provider.Reference) (totalbytes, usedbytes uint64, err error) {
+	return w.FSWithListRegexSupport.GetQuota(ctx, &provider.Reference{
+		Path: w.conf.QuotaNode,
+	})
 }
 
 func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKeys []string) ([]*provider.ResourceInfo, error) {
