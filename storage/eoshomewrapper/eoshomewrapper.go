@@ -21,6 +21,8 @@ package eoshomewrapper
 import (
 	"bytes"
 	"context"
+	"path"
+	"strings"
 	"text/template"
 
 	"github.com/Masterminds/sprig"
@@ -46,7 +48,12 @@ type FSWithListRegexSupport interface {
 type wrapper struct {
 	FSWithListRegexSupport
 	mountIDTemplate *template.Template
+	conf            *eosfs.Config
 }
+
+const (
+	blockedDirectory = ".blocked"
+)
 
 func (wrapper) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
@@ -84,7 +91,7 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 		return nil, err
 	}
 
-	return &wrapper{FSWithListRegexSupport: eos, mountIDTemplate: mountIDTemplate}, nil
+	return &wrapper{FSWithListRegexSupport: eos, mountIDTemplate: mountIDTemplate, conf: &c}, nil
 }
 
 // We need to override the two methods, GetMD and ListFolder to fill the
@@ -94,6 +101,12 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	res, err := w.FSWithListRegexSupport.GetMD(ctx, ref, mdKeys)
 	if err != nil {
 		return nil, err
+	}
+
+	// and that the space is not in a blocked state
+	blockedPath := path.Join(w.conf.Namespace, blockedDirectory)
+	if strings.HasPrefix(res.Path, blockedPath) {
+		return nil, errtypes.NotFound("file is in a blocked space")
 	}
 
 	// We need to extract the mount ID based on the mapping template.
