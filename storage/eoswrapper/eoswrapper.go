@@ -1,4 +1,4 @@
-// Copyright 2018-2023 CERN
+// Copyright 2018-2025 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/sprig"
-	"github.com/cernbox/reva-plugins/storage/eoshomewrapper"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	provider "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva/v3"
@@ -63,8 +62,13 @@ const (
 	blockedDirectory = ".blocked"
 )
 
+type FSWithListRegexSupport interface {
+	storage.FS
+	ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error)
+}
+
 type wrapper struct {
-	eoshomewrapper.FSWithListRegexSupport
+	FSWithListRegexSupport
 	conf            *eosfs.Config
 	mountIDTemplate *template.Template
 }
@@ -113,8 +117,7 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 	return &wrapper{FSWithListRegexSupport: eos, conf: &c, mountIDTemplate: mountIDTemplate}, nil
 }
 
-// We need to override the two methods, GetMD and ListFolder to fill the
-// StorageId in the ResourceInfo objects.
+// We need to override GetMD and ListFolder to fill the correct StorageId in the ResourceInfo objects.
 
 func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []string) (*provider.ResourceInfo, error) {
 	res, err := w.FSWithListRegexSupport.GetMD(ctx, ref, mdKeys)
@@ -142,9 +145,22 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	return res, nil
 }
 
+func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKeys []string) ([]*provider.ResourceInfo, error) {
+	res, err := w.FSWithListRegexSupport.ListFolder(ctx, ref, mdKeys)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range res {
+		r.Id.StorageId = w.getMountID(ctx, r)
+		r.ParentId.StorageId = w.getMountID(ctx, r)
+		w.setProjectSharingPermissions(ctx, r)
+	}
+	return res, nil
+}
+
 func (w *wrapper) GetQuota(ctx context.Context, ref *provider.Reference) (totalbytes, usedbytes uint64, err error) {
 	// Check if this storage provider corresponds to a non-project instance
-	if !strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+	if !w.isProjectInstance() {
 		// If so, we do the normal GetQuota (i.e. on the username and the root node, such as /eos/user)
 		return w.getOldStyleQuota(ctx, ref)
 	}
@@ -193,21 +209,6 @@ func (w *wrapper) getOldStyleQuota(ctx context.Context, ref *provider.Reference)
 	})
 }
 
-func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKeys []string) ([]*provider.ResourceInfo, error) {
-	res, err := w.FSWithListRegexSupport.ListFolder(ctx, ref, mdKeys)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range res {
-		r.Id.StorageId = w.getMountID(ctx, r)
-		r.ParentId.StorageId = w.getMountID(ctx, r)
-		if err = w.setProjectSharingPermissions(ctx, r); err != nil {
-			continue
-		}
-	}
-	return res, nil
-}
-
 func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([]*provider.FileVersion, error) {
 	if err := w.userIsProjectMember(ctx, ref, requireReader); err != nil {
 		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be accessed by project memners")
@@ -234,7 +235,7 @@ func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, 
 
 func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *provider.Grantee) error {
 	// This is only allowed for project space admins
-	if strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+	if w.isProjectInstance() {
 		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
 			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
 		}
@@ -257,31 +258,34 @@ func (w *wrapper) getMountID(ctx context.Context, r *provider.ResourceInfo) stri
 
 func (w *wrapper) setProjectSharingPermissions(ctx context.Context, r *provider.ResourceInfo) error {
 	// Check if this storage provider corresponds to a project spaces instance
-	if strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
-		// Extract project name from the path resembling /c/cernbox or /c/cernbox/minutes/..
-		parts := strings.SplitN(r.Path, "/", 4)
-		if len(parts) != 4 && len(parts) != 3 {
-			// The request might be for / or /$letter
-			// Nothing to do in that case
-			return nil
-		}
-		adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminsGroupSuffix
-		user := appctx.ContextMustGetUser(ctx)
+	// If this storage provider is not a project instance, we don't need to set anything
+	if !w.isProjectInstance() {
+		return nil
+	}
 
-		_, isPublicShare := utils.HasPublicShareRole(user)
+	// Extract project name from the path resembling /c/cernbox or /c/cernbox/minutes/..
+	parts := strings.SplitN(r.Path, "/", 4)
+	if len(parts) != 4 && len(parts) != 3 {
+		// The request might be for / or /$letter
+		// Nothing to do in that case
+		return nil
+	}
+	adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminsGroupSuffix
+	user := appctx.ContextMustGetUser(ctx)
 
-		for _, g := range user.Groups {
-			if g == adminGroup {
-				r.PermissionSet.AddGrant = true
-				r.PermissionSet.RemoveGrant = true
-				r.PermissionSet.UpdateGrant = true
-				r.PermissionSet.ListGrants = true
-				r.PermissionSet.GetQuota = true
-				if !isPublicShare {
-					r.PermissionSet.DenyGrant = true
-				}
-				return nil
+	_, isPublicShare := utils.HasPublicShareRole(user)
+
+	for _, g := range user.Groups {
+		if g == adminGroup {
+			r.PermissionSet.AddGrant = true
+			r.PermissionSet.RemoveGrant = true
+			r.PermissionSet.UpdateGrant = true
+			r.PermissionSet.ListGrants = true
+			r.PermissionSet.GetQuota = true
+			if !isPublicShare {
+				r.PermissionSet.DenyGrant = true
 			}
+			return nil
 		}
 	}
 	return nil
@@ -289,7 +293,7 @@ func (w *wrapper) setProjectSharingPermissions(ctx context.Context, r *provider.
 
 func (w *wrapper) userIsProjectMember(ctx context.Context, ref *provider.Reference, requiredLevel int) error {
 	// Check if this storage provider corresponds to a project spaces instance
-	if !strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+	if !w.isProjectInstance() {
 		return nil
 	}
 
@@ -332,4 +336,8 @@ func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth u
 		r.ParentId.StorageId = w.getMountID(ctx, r)
 	}
 	return res, nil
+}
+
+func (w *wrapper) isProjectInstance() bool {
+	return strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace)
 }
