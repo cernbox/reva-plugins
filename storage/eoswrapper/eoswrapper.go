@@ -48,6 +48,7 @@ func init() {
 
 const (
 	eosProjectsNamespace = "/eos/project"
+	eosHomesNamespace    = "/eos/user"
 
 	// We can use a regex for these, but that might have inferior performance.
 	projectSpaceGroupsPrefix       = "cernbox-project-"
@@ -159,9 +160,9 @@ func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKey
 }
 
 func (w *wrapper) GetQuota(ctx context.Context, ref *provider.Reference) (totalbytes, usedbytes uint64, err error) {
-	// Check if this storage provider corresponds to a non-project instance
-	if !w.isProjectInstance() {
-		// If so, we do the normal GetQuota (i.e. on the username and the root node, such as /eos/user)
+	// Check if this storage provider corresponds to a home instance
+	if w.isHomeInstance() {
+		// If so, we do the normal GetQuota (i.e. on the username and the root node, /eos/user)
 		return w.getOldStyleQuota(ctx, ref)
 	}
 
@@ -340,4 +341,8 @@ func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth u
 
 func (w *wrapper) isProjectInstance() bool {
 	return strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace)
+}
+
+func (w *wrapper) isHomeInstance() bool {
+	return strings.HasPrefix(w.conf.Namespace, eosHomesNamespace)
 }
