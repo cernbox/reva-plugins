@@ -95,7 +95,7 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 	}
 
 	// allow recycle operations for project spaces
-	if !c.EnableHome && strings.HasPrefix(c.Namespace, eosProjectsNamespace) {
+	if strings.HasPrefix(c.Namespace, eosProjectsNamespace) {
 		c.AllowPathRecycleOperations = true
 	}
 
