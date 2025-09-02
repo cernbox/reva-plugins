@@ -100,44 +100,45 @@ func (m *manager) getVal(key string) (string, error) {
 
 func (m *manager) findCachedUsers(query string) ([]*userpb.User, error) {
 	conn := m.redisPool.Get()
+	if conn == nil {
+		return nil, errors.New("rest: unable to get connection from redis pool")
+	}
 	defer conn.Close()
-	if conn != nil {
-		query = fmt.Sprintf("%s*%s*", userPrefix, strings.ReplaceAll(strings.ToLower(query), " ", "_"))
-		keys, err := redis.Strings(conn.Do("KEYS", query))
-		if err != nil {
-			return nil, err
-		}
-		var args []interface{}
-		for _, k := range keys {
-			args = append(args, k)
-		}
 
-		if len(args) == 0 {
-			return []*userpb.User{}, nil
-		}
-
-		// Fetch the users for all these keys
-		userStrings, err := redis.Strings(conn.Do("MGET", args...))
-		if err != nil {
-			return nil, err
-		}
-		userMap := make(map[string]*userpb.User)
-		for _, user := range userStrings {
-			u := userpb.User{}
-			if err = json.Unmarshal([]byte(user), &u); err == nil {
-				userMap[u.Id.OpaqueId] = &u
-			}
-		}
-
-		var users []*userpb.User
-		for _, u := range userMap {
-			users = append(users, u)
-		}
-
-		return users, nil
+	query = fmt.Sprintf("%s*%s*", userPrefix, strings.ReplaceAll(strings.ToLower(query), " ", "_"))
+	keys, err := redis.Strings(conn.Do("KEYS", query))
+	if err != nil {
+		return nil, err
+	}
+	var args []interface{}
+	for _, k := range keys {
+		args = append(args, k)
 	}
 
-	return nil, errors.New("rest: unable to get connection from redis pool")
+	if len(args) == 0 {
+		return []*userpb.User{}, nil
+	}
+
+	// Fetch the users for all these keys
+	userStrings, err := redis.Strings(conn.Do("MGET", args...))
+	if err != nil {
+		return nil, err
+	}
+	userMap := make(map[string]*userpb.User)
+	for _, user := range userStrings {
+		u := userpb.User{}
+		if err = json.Unmarshal([]byte(user), &u); err == nil {
+			userMap[u.Id.OpaqueId] = &u
+		}
+	}
+
+	var users []*userpb.User
+	for _, u := range userMap {
+		users = append(users, u)
+	}
+
+	return users, nil
+
 }
 
 func (m *manager) fetchCachedUserDetails(uid *userpb.UserId) (*userpb.User, error) {
