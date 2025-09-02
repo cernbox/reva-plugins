@@ -35,7 +35,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/cs3org/reva/v3/pkg/utils/list"
 	"github.com/gomodule/redigo/redis"
-	"github.com/rs/zerolog/log"
 )
 
 func init() {
@@ -220,6 +219,7 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 }
 
 func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.User, error) {
+	log := appctx.GetLogger(ctx)
 	u := &userpb.User{
 		Id: &userpb.UserId{
 			OpaqueId: i.Upn,
@@ -274,7 +274,7 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 	return u, nil
 }
 
-func (m *manager) FindUsers(ctx context.Context, query string, skipFetchingGroups bool) ([]*userpb.User, error) {
+func (m *manager) FindUsers(ctx context.Context, query string, filters []*userpb.Filter, skipFetchingGroups bool) ([]*userpb.User, error) {
 	// Look at namespaces filters. If the query starts with:
 	// "a" => look into primary/secondary/service accounts
 	// "l" => look into lightweight/federated accounts
@@ -293,25 +293,42 @@ func (m *manager) FindUsers(ctx context.Context, query string, skipFetchingGroup
 		return nil, err
 	}
 
-	userSlice := []*userpb.User{}
+	result := []*userpb.User{}
 
-	var accountsFilters []userpb.UserType
-	switch namespace {
-	case "":
-		accountsFilters = []userpb.UserType{userpb.UserType_USER_TYPE_PRIMARY}
-	case "a":
-		accountsFilters = []userpb.UserType{userpb.UserType_USER_TYPE_PRIMARY, userpb.UserType_USER_TYPE_SECONDARY, userpb.UserType_USER_TYPE_SERVICE}
-	case "l":
-		accountsFilters = []userpb.UserType{userpb.UserType_USER_TYPE_LIGHTWEIGHT, userpb.UserType_USER_TYPE_FEDERATED}
-	}
+	if filters != nil {
+		// For libregraph
+		for _, u := range users {
+			filterOk := true
+			for _, filter := range filters {
+				if !user.DoesUserFulfillFilterCriteria(u, filter) {
+					filterOk = false
+					break
+				}
+			}
 
-	for _, u := range users {
-		if isUserAnyType(u, accountsFilters) {
-			userSlice = append(userSlice, u)
+			if filterOk {
+				result = append(result, u)
+			}
+		}
+	} else {
+		// For old web compatability
+		var accountsFilters []userpb.UserType
+		switch namespace {
+		case "":
+			accountsFilters = []userpb.UserType{userpb.UserType_USER_TYPE_PRIMARY}
+		case "a":
+			accountsFilters = []userpb.UserType{userpb.UserType_USER_TYPE_PRIMARY, userpb.UserType_USER_TYPE_SECONDARY, userpb.UserType_USER_TYPE_SERVICE}
+		case "l":
+			accountsFilters = []userpb.UserType{userpb.UserType_USER_TYPE_LIGHTWEIGHT, userpb.UserType_USER_TYPE_FEDERATED}
+		}
+		for _, u := range users {
+			if isUserAnyType(u, accountsFilters) {
+				result = append(result, u)
+			}
 		}
 	}
 
-	return userSlice, nil
+	return result, nil
 }
 
 // isUserAnyType returns true if the user's type is one of types list.
