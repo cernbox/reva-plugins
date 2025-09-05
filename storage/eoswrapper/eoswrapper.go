@@ -34,6 +34,7 @@ import (
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/spaces"
 	"github.com/cs3org/reva/v3/pkg/storage"
 	"github.com/cs3org/reva/v3/pkg/storage/fs/registry"
 	"github.com/cs3org/reva/v3/pkg/storage/utils/eosfs"
@@ -138,6 +139,13 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	// If it's empty, leave it empty to be filled by storageprovider.
 	res.Id.StorageId = w.getMountID(ctx, res)
 	res.ParentId.StorageId = w.getMountID(ctx, res)
+
+	res.Space = &provider.StorageSpace{
+		Id: &provider.StorageSpaceId{
+			OpaqueId: spaces.EncodeSpaceID(spaces.PathToSpaceID(res.Path)),
+		},
+		SpaceType: w.spaceType().AsString(),
+	}
 
 	if err = w.setProjectSharingPermissions(ctx, res); err != nil {
 		return nil, err
@@ -340,9 +348,18 @@ func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth u
 }
 
 func (w *wrapper) isProjectInstance() bool {
-	return strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace)
+	return w.spaceType() == spaces.SpaceTypeProject
 }
 
 func (w *wrapper) isHomeInstance() bool {
-	return strings.HasPrefix(w.conf.Namespace, eosHomesNamespace)
+	return w.spaceType() == spaces.SpaceTypeHome
+}
+
+func (w *wrapper) spaceType() spaces.SpaceType {
+	if strings.HasPrefix(w.conf.Namespace, eosHomesNamespace) {
+		return spaces.SpaceTypeHome
+	} else if strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+		return spaces.SpaceTypeProject
+	}
+	return spaces.SpaceTypePublic
 }
