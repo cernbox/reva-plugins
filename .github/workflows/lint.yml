@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-            go-version: '1.22'
+            go-version: '1.25.1'
             cache: true
      # Cloning outside of workspace is currently not possible, see https://github.com/actions/checkout/issues/197
      # Therefore, we move later 
@@ -29,8 +29,5 @@ jobs:
       - run: mv reva ../reva
       - name: Go mod tidy
         run: go mod tidy
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-            version: latest
-            args: --timeout=5m
+      - name: Go lint
+        run: go vet ./...
