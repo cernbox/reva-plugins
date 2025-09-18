@@ -5,13 +5,12 @@ go 1.25.1
 require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
 	github.com/bluele/gcache v0.0.2
-	github.com/cs3org/go-cs3apis v0.0.0-20250902085700-00cd04c8e01c
+	github.com/cs3org/go-cs3apis v0.0.0-20250908152307-4ca807afe54e
 	github.com/cs3org/reva/v3 v3.0.1
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-chi/chi/v5 v5.2.3
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gomodule/redigo v1.9.2
-	github.com/juliangruber/go-intersect v1.1.0
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.34.0
