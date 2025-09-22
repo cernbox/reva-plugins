@@ -212,7 +212,7 @@ func (w *wrapper) getOldStyleQuota(ctx context.Context, ref *provider.Reference)
 
 func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([]*provider.FileVersion, error) {
 	if err := w.userIsProjectMember(ctx, ref, requireReader); err != nil {
-		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be accessed by project memners")
+		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be accessed by project members")
 	}
 
 	return w.FSWithListRegexSupport.ListRevisions(ctx, ref)
@@ -220,7 +220,7 @@ func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([
 
 func (w *wrapper) DownloadRevision(ctx context.Context, ref *provider.Reference, revisionKey string) (io.ReadCloser, error) {
 	if err := w.userIsProjectMember(ctx, ref, requireReader); err != nil {
-		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be downloaded by project memners")
+		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be downloaded by project members")
 	}
 
 	return w.FSWithListRegexSupport.DownloadRevision(ctx, ref, revisionKey)
