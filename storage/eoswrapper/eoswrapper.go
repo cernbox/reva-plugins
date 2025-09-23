@@ -34,6 +34,7 @@ import (
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/spaces"
 	"github.com/cs3org/reva/v3/pkg/storage"
 	"github.com/cs3org/reva/v3/pkg/storage/fs/registry"
 	"github.com/cs3org/reva/v3/pkg/storage/utils/eosfs"
@@ -141,6 +142,11 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 
 	if err = w.setProjectSharingPermissions(ctx, res); err != nil {
 		return nil, err
+	}
+
+	if res.Id.SpaceId == "" {
+		log := appctx.GetLogger(ctx)
+		log.Error().Msgf("Space ID not set for stat to %s", res.Path)
 	}
 
 	return res, nil
@@ -340,9 +346,18 @@ func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth u
 }
 
 func (w *wrapper) isProjectInstance() bool {
-	return strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace)
+	return w.spaceType() == spaces.SpaceTypeProject
 }
 
 func (w *wrapper) isHomeInstance() bool {
-	return strings.HasPrefix(w.conf.Namespace, eosHomesNamespace)
+	return w.spaceType() == spaces.SpaceTypeHome
+}
+
+func (w *wrapper) spaceType() spaces.SpaceType {
+	if strings.HasPrefix(w.conf.Namespace, eosHomesNamespace) {
+		return spaces.SpaceTypeHome
+	} else if strings.HasPrefix(w.conf.Namespace, eosProjectsNamespace) {
+		return spaces.SpaceTypeProject
+	}
+	return spaces.SpaceTypePublic
 }

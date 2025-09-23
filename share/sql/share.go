@@ -20,6 +20,7 @@ package sql
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -216,9 +217,7 @@ func (m *ShareMgr) UpdateShare(ctx context.Context, ref *collaboration.ShareRefe
 }
 
 func (m *ShareMgr) ListShares(ctx context.Context, filters []*collaboration.Filter) ([]*collaboration.Share, error) {
-	user, _ := appctx.ContextGetUser(ctx)
-
-	shares, err := m.ListModelShares(user, filters, false)
+	shares, err := m.ListModelShares(nil, filters, false)
 	if err != nil {
 		return nil, err
 	}
@@ -574,13 +573,7 @@ func (m *ShareMgr) isProjectAdmin(u *userpb.User, path string) bool {
 		}
 
 		adminGroup := projectSpaceGroupsPrefix + parts[4] + projectSpaceAdminGroupsSuffix
-		for _, g := range u.Groups {
-			if g == adminGroup {
-				// User belongs to the admin group, list all shares for the resource
-
-				return true
-			}
-		}
+		return slices.Contains(u.Groups, adminGroup)
 	}
 	return false
 }
