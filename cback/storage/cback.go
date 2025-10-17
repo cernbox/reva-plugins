@@ -407,7 +407,10 @@ func (f *fs) ListFolder(ctx context.Context, ref *provider.Reference, mdKeys []s
 	return nil, errtypes.NotFound(fmt.Sprintf("path %s does not exist", ref.Path))
 }
 
-func (f *fs) Download(ctx context.Context, ref *provider.Reference) (io.ReadCloser, error) {
+func (f *fs) Download(ctx context.Context, ref *provider.Reference, ranges []storage.Range) (io.ReadCloser, error) {
+	if len(ranges) > 0 {
+		return nil, errtypes.NotSupported("Download with ranges is not supported with this storage driver")
+	}
 	user, ok := appctx.ContextGetUser(ctx)
 	if !ok {
 		return nil, errtypes.UserRequired("cback: user not found in context")
