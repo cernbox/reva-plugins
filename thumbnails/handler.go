@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ import (
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
 	"github.com/cs3org/reva/v3/pkg/rhttp/router"
 	"github.com/cs3org/reva/v3/pkg/sharedconf"
+	"github.com/cs3org/reva/v3/pkg/spaces"
 	"github.com/cs3org/reva/v3/pkg/storage/utils/downloader"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/pkg/errors"
@@ -143,15 +145,45 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 	return s, nil
 }
 
+func (s *Thumbnails) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var head string
+
+		head, r.URL.Path = router.ShiftPath(r.URL.Path)
+		switch head {
+		case "files":
+			if !checkMethods(r, http.MethodGet) {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			s.davUserContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
+		case "public-files":
+			if !checkMethods(r, http.MethodGet, http.MethodHead) {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			s.davPublicContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
+		}
+	})
+}
+
 func (s *Thumbnails) davUserContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		log := appctx.GetLogger(ctx)
 
-		path := r.URL.Path
-		path, _ = url.PathUnescape(path)
+		urlPath, _ := url.PathUnescape(r.URL.Path)
+
+		storageSpaceID, resourcePath := router.ShiftPath(urlPath)
+		_, spacePath, ok := spaces.DecodeStorageSpaceID(storageSpaceID)
+		if !ok {
+			s.writeHTTPError(w, errtypes.NotFound(""))
+			return
+		}
+		resourcePath = path.Join(spacePath, resourcePath)
 
 		res, err := s.statRes(ctx, &provider.Reference{
-			Path: path,
+			Path: resourcePath,
 		})
 		if err != nil {
 			s.writeHTTPError(w, err)
@@ -159,6 +191,7 @@ func (s *Thumbnails) davUserContext(next http.Handler) http.Handler {
 		}
 
 		ctx = ContextSetResource(ctx, res)
+		log.Info().Msgf("FindMe - set resource %s", res.Path)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -365,12 +398,16 @@ func parseDimension(d, name string, defaultValue int) (int, error) {
 func (s *Thumbnails) Thumbnail(w http.ResponseWriter, r *http.Request) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		thumbReq, err := s.parseThumbnailRequest(r)
+		log := appctx.GetLogger(r.Context())
+		log.Info().Msgf("FindMe - Handling thumbnail request %s", thumbReq.File)
 		if err != nil {
 			s.writeHTTPError(w, err)
 			return
 		}
 
 		data, mimetype, err := s.thumbnail.GetThumbnail(r.Context(), thumbReq.File, thumbReq.ETag, thumbReq.Width, thumbReq.Height, thumbReq.OutputType)
+		log.Info().Msgf("FindMe - Got thumbnail for %s", thumbReq.File)
+
 		if err != nil {
 			s.writeHTTPError(w, err)
 			return
@@ -400,29 +437,6 @@ func (s *Thumbnails) writeHTTPError(w http.ResponseWriter, err error) {
 	}
 
 	_, _ = w.Write([]byte(err.Error()))
-}
-
-func (s *Thumbnails) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var head string
-
-		head, r.URL.Path = router.ShiftPath(r.URL.Path)
-		switch head {
-		case "files":
-			if !checkMethods(r, http.MethodGet) {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			s.davUserContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
-			return
-		case "public-files":
-			if !checkMethods(r, http.MethodGet, http.MethodHead) {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			s.davPublicContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
-		}
-	})
 }
 
 func checkMethods(r *http.Request, methods ...string) bool {

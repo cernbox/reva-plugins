@@ -35,6 +35,10 @@ import (
 
 	// load all the cache drivers
 	_ "github.com/cernbox/reva-plugins/thumbnails/cache/loader"
+
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 )
 
 // FileType is the output format of the thumbnail
@@ -106,6 +110,8 @@ func (t *Thumbnail) GetThumbnail(ctx context.Context, file, etag string, width, 
 	defer r.Close()
 
 	img, _, err := image.Decode(r)
+	log.Debug().Err(err).Msgf("thumbnails: finished decoding %s", file)
+
 	if err != nil {
 		return nil, "", errors.Wrap(err, "thumbnails: error decoding file "+file)
 	}
@@ -113,6 +119,7 @@ func (t *Thumbnail) GetThumbnail(ctx context.Context, file, etag string, width, 
 	resolution := image.Rect(0, 0, width, height)
 	match := t.fixedResolutions.MatchOrResize(resolution, img.Bounds())
 	thumb := imaging.Thumbnail(img, match.Dx(), match.Dy(), imaging.Linear)
+	log.Debug().Msgf("thumbnails: finished resize %s", file)
 
 	var buf bytes.Buffer
 	format, opts := t.getEncoderFormat(outType)
@@ -120,9 +127,11 @@ func (t *Thumbnail) GetThumbnail(ctx context.Context, file, etag string, width, 
 	if err != nil {
 		return nil, "", errors.Wrap(err, "thumbnails: error encoding image")
 	}
+	log.Debug().Msgf("thumbnails: finished re-encoding %s", file)
 
 	data := buf.Bytes()
 	err = t.cache.Set(file, etag, width, height, data)
+
 	if err != nil {
 		log.Warn().Msg("failed to save data into the cache")
 	} else {
