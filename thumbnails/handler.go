@@ -170,7 +170,6 @@ func (s *Thumbnails) Handler() http.Handler {
 func (s *Thumbnails) davUserContext(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		log := appctx.GetLogger(ctx)
 
 		urlPath, _ := url.PathUnescape(r.URL.Path)
 
@@ -191,7 +190,6 @@ func (s *Thumbnails) davUserContext(next http.Handler) http.Handler {
 		}
 
 		ctx = ContextSetResource(ctx, res)
-		log.Info().Msgf("FindMe - set resource %s", res.Path)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -398,15 +396,12 @@ func parseDimension(d, name string, defaultValue int) (int, error) {
 func (s *Thumbnails) Thumbnail(w http.ResponseWriter, r *http.Request) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		thumbReq, err := s.parseThumbnailRequest(r)
-		log := appctx.GetLogger(r.Context())
-		log.Info().Msgf("FindMe - Handling thumbnail request %s", thumbReq.File)
 		if err != nil {
 			s.writeHTTPError(w, err)
 			return
 		}
 
 		data, mimetype, err := s.thumbnail.GetThumbnail(r.Context(), thumbReq.File, thumbReq.ETag, thumbReq.Width, thumbReq.Height, thumbReq.OutputType)
-		log.Info().Msgf("FindMe - Got thumbnail for %s", thumbReq.File)
 
 		if err != nil {
 			s.writeHTTPError(w, err)
