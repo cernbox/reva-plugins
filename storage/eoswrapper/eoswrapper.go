@@ -240,39 +240,6 @@ func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, 
 	return w.FSWithListRegexSupport.RestoreRevision(ctx, ref, revisionKey)
 }
 
-func (w *wrapper) AddGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
-	// AddGrant is only allowed for admins in a project space
-	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
-		}
-	}
-
-	return w.FSWithListRegexSupport.AddGrant(ctx, ref, g)
-}
-
-func (w *wrapper) UpdateGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
-	// UpdateGrant is only allowed for admins in a project space
-	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
-		}
-	}
-
-	return w.FSWithListRegexSupport.UpdateGrant(ctx, ref, g)
-}
-
-func (w *wrapper) RemoveGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
-	// RemoveGrant is only allowed for admins in a project space
-	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
-		}
-	}
-
-	return w.FSWithListRegexSupport.RemoveGrant(ctx, ref, g)
-}
-
 func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *provider.Grantee) error {
 	// This is only allowed for project space admins
 	if w.isProjectInstance() {
