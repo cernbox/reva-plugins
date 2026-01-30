@@ -199,7 +199,7 @@ func (w *wrapper) GetQuota(ctx context.Context, ref *provider.Reference) (totalb
 	total, used, err := w.FSWithListRegexSupport.GetQuota(gidctx, &provider.Reference{
 		Path: path,
 	})
-	if err != nil || total == 0 && used == 0 {
+	if err != nil || total == 0 {
 		// Getting new-style quota failed, so we fall back to the old style way
 		return w.getOldStyleQuota(ctx, ref)
 	}
