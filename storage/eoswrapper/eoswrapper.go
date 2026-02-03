@@ -244,7 +244,7 @@ func (w *wrapper) AddGrant(ctx context.Context, ref *provider.Reference, g *prov
 	// AddGrant is only allowed for admins in a project space
 	if w.isProjectInstance() {
 		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
+			return errtypes.PermissionDenied("eosfs: add grant can only be done by project admins")
 		}
 	}
 
