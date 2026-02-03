@@ -163,7 +163,7 @@ type GroupsResponse struct {
 }
 
 func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1.0/Group?field=groupIdentifier&field=displayName&field=gid&field=isComputingGroup", m.conf.APIBaseURL)
+	url := fmt.Sprintf("%s/api/v1.0/Group?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier&field=displayName&field=gid&field=isComputingGroup", m.conf.APIBaseURL)
 
 	for {
 		var r GroupsResponse
