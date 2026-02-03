@@ -241,9 +241,11 @@ func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, 
 }
 
 func (w *wrapper) AddGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
+	log := appctx.GetLogger(ctx)
 	// AddGrant is only allowed for admins in a project space
 	if w.isProjectInstance() {
 		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
+			log.Info().Err(err).Any("ref", ref).Msgf("FindMe")
 			return errtypes.PermissionDenied("eosfs: add grant can only be done by project admins")
 		}
 	}
@@ -341,9 +343,12 @@ func (w *wrapper) userIsProjectMember(ctx context.Context, ref *provider.Referen
 	if err != nil {
 		return err
 	}
+	log := appctx.GetLogger(ctx)
 
 	// Extract project name from the path resembling /c/cernbox or /c/cernbox/minutes/..
 	parts := strings.SplitN(res.Path, "/", 4)
+	log.Info().Str("path", res.Path).Any("parts", parts).Msgf("FindMe")
+
 	if len(parts) != 4 && len(parts) != 3 {
 		// The request might be for / or /$letter
 		// Nothing to do in that case
@@ -354,6 +359,8 @@ func (w *wrapper) userIsProjectMember(ctx context.Context, ref *provider.Referen
 	writersGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceWritersGroupSuffix
 	readersGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceReadersGroupSuffix
 	user := appctx.ContextMustGetUser(ctx)
+
+	log.Info().Str("comparing with", adminsGroup).Msgf("FindMe")
 
 	for _, g := range user.Groups {
 		if (g == adminsGroup && requiredLevel <= requireAdmin) ||
