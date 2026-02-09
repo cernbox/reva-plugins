@@ -166,13 +166,7 @@ func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKey
 }
 
 func (w *wrapper) GetQuota(ctx context.Context, ref *provider.Reference) (totalbytes, usedbytes uint64, err error) {
-	// Check if this storage provider corresponds to a home instance
-	if w.isHomeInstance() {
-		// If so, we do the normal GetQuota (i.e. on the username and the root node, /eos/user)
-		return w.getOldStyleQuota(ctx, ref)
-	}
-
-	// If it is a project, we try to fetch the new-style project quota
+	// Let's frist try to fetch the new-style quota
 	// This means, with GID 99 and on the project root (/eos/project/n/name) instead of the root node (/eos/project)
 
 	// Get context with GID 99
