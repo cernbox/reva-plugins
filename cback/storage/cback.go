@@ -521,7 +521,7 @@ func (f *fs) UnsetArbitraryMetadata(ctx context.Context, ref *provider.Reference
 	return errtypes.NotSupported("Operation Not Permitted")
 }
 
-func (f *fs) EmptyRecycle(ctx context.Context) error {
+func (f *fs) EmptyRecycle(ctx context.Context, _ string) error {
 	return errtypes.NotSupported("Operation Not Permitted")
 }
 

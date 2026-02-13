@@ -8,7 +8,7 @@ require (
 	github.com/cs3org/go-cs3apis v0.0.0-20260130145416-2dc593dc27e7
 	github.com/cs3org/reva/v3 v3.0.1
 	github.com/disintegration/imaging v1.6.2
-	github.com/go-chi/chi/v5 v5.2.4
+	github.com/go-chi/chi/v5 v5.2.5
 	github.com/gomodule/redigo v1.9.3
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
@@ -23,7 +23,7 @@ require (
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/ReneKroon/ttlcache/v2 v2.11.0 // indirect
 	github.com/bmizerany/pat v0.0.0-20210406213842-e4b6760bdd6f // indirect
-	github.com/cern-eos/go-eosgrpc v0.0.0-20250429151059-e8c6e014a629 // indirect
+	github.com/cern-eos/go-eosgrpc v0.0.0-20251208134355-97fba509448d // indirect
 	github.com/creasty/defaults v1.8.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/glpatcern/go-mime v0.0.0-20221026162842-2a8d71ad17a9 // indirect
@@ -55,7 +55,7 @@ require (
 	golang.org/x/image v0.13.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	google.golang.org/genproto v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
