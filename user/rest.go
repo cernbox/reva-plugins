@@ -266,6 +266,10 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 	}
 
 	u.Username = revautils.FormatUserID(u.Id)
+	if i.ActiveUser == false && u.Id.Type == userpb.UserType_USER_TYPE_PRIMARY {
+		// keep track that this primary account is inactive, i.e. has left CERN
+		u.Status = userpb.UserStatus_USER_STATUS_INACTIVE
+	}
 
 	if err := m.cacheUserDetails(u); err != nil {
 		log.Error().Err(err).Msg("rest: error caching user details")
