@@ -23,7 +23,7 @@ require (
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/ReneKroon/ttlcache/v2 v2.11.0 // indirect
 	github.com/bmizerany/pat v0.0.0-20210406213842-e4b6760bdd6f // indirect
-	github.com/cern-eos/go-eosgrpc v0.0.0-20250429151059-e8c6e014a629 // indirect
+	github.com/cern-eos/go-eosgrpc v0.0.0-20251208134355-97fba509448d // indirect
 	github.com/creasty/defaults v1.8.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/glpatcern/go-mime v0.0.0-20221026162842-2a8d71ad17a9 // indirect
