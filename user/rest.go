@@ -343,7 +343,7 @@ func isUserAnyType(user *userpb.User, types []userpb.UserType) bool {
 
 // Group contains the information about a group.
 type Group struct {
-	DisplayName string `json:"displayName"`
+	GroupIdentifier string `json:"groupIdentifier"`
 }
 
 // GroupsResponse contains the expected response from grappa
@@ -362,13 +362,13 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 	}
 
 	// no pagination here because a user can be member of 1010 groups at most (Microsoft AD hardcoded limitation)
-	url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=displayName", m.conf.APIBaseURL, uid.OpaqueId)
+	url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, uid.OpaqueId)
 	var r GroupsResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
 		return nil, err
 	}
 
-	groups = list.Map(r.Data, func(g Group) string { return strings.ToLower(g.DisplayName) })
+	groups = list.Map(r.Data, func(g Group) string { return strings.ToLower(g.GroupIdentifier) })
 
 	if err = m.cacheUserGroups(uid, groups); err != nil {
 		log := appctx.GetLogger(ctx)
