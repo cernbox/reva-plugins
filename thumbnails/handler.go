@@ -174,7 +174,7 @@ func (s *Thumbnails) davUserContext(next http.Handler) http.Handler {
 		urlPath, _ := url.PathUnescape(r.URL.Path)
 
 		storageSpaceID, resourcePath := router.ShiftPath(urlPath)
-		_, spacePath, ok := spaces.DecodeStorageSpaceID(storageSpaceID)
+		_, spacePath, ok := spaces.DecodeStorageSpaceIDToPath(storageSpaceID)
 		if !ok {
 			s.writeHTTPError(w, errtypes.NotFound(""))
 			return
