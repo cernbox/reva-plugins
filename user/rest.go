@@ -356,23 +356,31 @@ type GroupsResponse struct {
 }
 
 func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]string, error) {
+	log := appctx.GetLogger(ctx)
+	log.Debug().Str("uid", uid.OpaqueId).Msg("FindMe: GetUserGroups called")
+
 	groups, err := m.fetchCachedUserGroups(uid)
 	if err == nil {
+		log.Debug().Str("uid", uid.OpaqueId).Msg("FindMe: GetUserGroups cache hit")
 		return groups, nil
 	}
+
+	log.Debug().Str("uid", uid.OpaqueId).Msg("FindMe: GetUserGroups cache miss, fetching from API")
 
 	// no pagination here because a user can be member of 1010 groups at most (Microsoft AD hardcoded limitation)
 	url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, uid.OpaqueId)
 	var r GroupsResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
+		log.Error().Err(err).Str("url", url).Msg("FindMe: GetUserGroups API request failed")
 		return nil, err
 	}
 
 	groups = list.Map(r.Data, func(g Group) string { return strings.ToLower(g.GroupIdentifier) })
 
+	log.Debug().Int("count", len(r.Data)).Interface("sample", r.Data).Str("url", url).Msg("FindMe: GetUserGroups API response")
+
 	if err = m.cacheUserGroups(uid, groups); err != nil {
-		log := appctx.GetLogger(ctx)
-		log.Error().Err(err).Msg("rest: error caching user groups")
+		log.Error().Err(err).Msg("FindMe: error caching user groups")
 	}
 
 	return groups, nil
