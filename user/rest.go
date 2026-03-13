@@ -267,8 +267,21 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 
 	u.Username = revautils.FormatUserID(u.Id)
 	if i.ActiveUser == false && u.Id.Type == userpb.UserType_USER_TYPE_PRIMARY {
-		// keep track that this primary account is inactive, i.e. has left CERN
-		u.Status = userpb.UserStatus_USER_STATUS_INACTIVE
+		// keep track that this primary account is going to expire, i.e. has left CERN
+		u.Status = userpb.UserStatus_USER_STATUS_EXPIRING
+
+		// check if the user was active before: if so, notify the lifecycle manager that the user has left CERN
+		cachedUser, err := m.fetchCachedUserDetails(u.Id)
+		if err != nil {
+			log.Error().Err(err).Str("user", u.Username).Msg("rest: error fetching cached user details to check if the user has left CERN")
+		} else {
+			if cachedUser.Status != userpb.UserStatus_USER_STATUS_EXPIRING {
+				log.Info().Str("user", u.Username).Msg("rest: user has left CERN, notifying lifecycle manager")
+				if err := m.notifyLifecycleManager(ctx, u); err != nil {
+					log.Error().Err(err).Str("user", u.Username).Msg("rest: error notifying lifecycle manager about user leaving CERN")
+				}
+			}
+		}
 	}
 
 	if err := m.cacheUserDetails(u); err != nil {
@@ -299,6 +312,11 @@ func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]
 
 	log.Debug().Any("externalIdentities", identities).Msgf("Found external identities for user %s", email)
 	return identities, nil
+}
+
+func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User) error {
+	// TODO(lopresti) notify our lifecycle daemon that the user has left CERN
+	return nil
 }
 
 func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingGroups bool) (*userpb.User, error) {

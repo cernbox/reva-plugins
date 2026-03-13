@@ -68,7 +68,7 @@ func (m *manager) findCachedUsers(ctx context.Context, query string) ([]*userpb.
 		u := userpb.User{}
 		// Only keep users that have no "inactive" status set (cf. parseAndCacheUser)
 		if err = json.Unmarshal([]byte(user), &u); err == nil {
-			if u.Status != userpb.UserStatus_USER_STATUS_INACTIVE {
+			if u.Status != userpb.UserStatus_USER_STATUS_EXPIRING {
 				userMap[u.Id.OpaqueId] = &u
 			}
 		}
