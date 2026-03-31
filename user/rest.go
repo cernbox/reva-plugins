@@ -20,6 +20,7 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -27,10 +28,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cernbox/reva-plugins/utils"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
-	utils "github.com/cs3org/reva/v3/pkg/cbox/utils"
+	revautils "github.com/cs3org/reva/v3/pkg/cbox/utils"
 	"github.com/cs3org/reva/v3/pkg/user"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/cs3org/reva/v3/pkg/utils/list"
@@ -44,7 +46,7 @@ func init() {
 type manager struct {
 	conf            *config
 	redisPool       *redis.Pool
-	apiTokenManager *utils.APITokenManager
+	apiTokenManager *revautils.APITokenManager
 }
 
 func (manager) RevaPlugin() reva.PluginInfo {
@@ -120,7 +122,7 @@ func (m *manager) Configure(ml map[string]interface{}) error {
 		return err
 	}
 	redisPool := initRedisPool(c.RedisAddress, c.RedisUsername, c.RedisPassword)
-	apiTokenManager, err := utils.InitAPITokenManager(ml)
+	apiTokenManager, err := revautils.InitAPITokenManager(ml)
 	if err != nil {
 		return err
 	}
@@ -220,6 +222,7 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 
 func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.User, error) {
 	log := appctx.GetLogger(ctx)
+
 	u := &userpb.User{
 		Id: &userpb.UserId{
 			OpaqueId: i.Upn,
@@ -231,13 +234,44 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 		UidNumber:   int64(i.UID),
 		GidNumber:   int64(i.GID),
 	}
-	u.Username = utils.FormatUserID(u.Id)
+	if i.UserType() == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
+		if i.PrimaryAccountEmail != "" {
+			u.Id.OpaqueId = i.PrimaryAccountEmail
+		} else {
+			return nil, errors.New("Cannot parse a lightweight user without an associated email")
+		}
+	}
+
+	u.Username = revautils.FormatUserID(u.Id)
 
 	if err := m.cacheUserDetails(u); err != nil {
 		log.Error().Err(err).Msg("rest: error caching user details")
 	}
 
 	return u, nil
+}
+
+func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]*userpb.ExternalIdentity, error) {
+	log := appctx.GetLogger(ctx)
+	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=source", m.conf.APIBaseURL, email)
+	var r *IdentitiesResponse
+	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
+		log.Error().Err(err).Msgf("error fetching external identities for %s", email)
+		return nil, err
+	}
+
+	identities := list.Map(r.Data, func(id *Identity) *userpb.ExternalIdentity {
+		if id.Source != "cern" {
+			return &userpb.ExternalIdentity{
+				OpaqueId: id.Upn,
+			}
+		}
+		return nil
+	})
+	identities = list.Filter(identities, func(ei *userpb.ExternalIdentity) bool { return ei != nil })
+
+	log.Debug().Any("externalIdentities", identities).Msgf("Found external identities for user %s", email)
+	return identities, nil
 }
 
 func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingGroups bool) (*userpb.User, error) {
@@ -356,26 +390,46 @@ type GroupsResponse struct {
 }
 
 func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]string, error) {
-	groups, err := m.fetchCachedUserGroups(uid)
+	cachedGroups, err := m.fetchCachedUserGroups(uid)
 	if err == nil {
-		return groups, nil
+		return cachedGroups, nil
 	}
 
-	// no pagination here because a user can be member of 1010 groups at most (Microsoft AD hardcoded limitation)
-	url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, uid.OpaqueId)
-	var r GroupsResponse
-	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
-		return nil, err
+	groups := make(utils.Set[string])
+
+	log := appctx.GetLogger(ctx)
+	// For LW users, the opaque ID is the e-mail address, and the user's identities by which the
+	// system knows them are stored in `ExternalIdentities`
+	uids := []string{}
+	if uid.Type == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
+		extIds, err := m.fetchExternalIdentities(ctx, uid.OpaqueId)
+		if err != nil {
+			log.Error().Err(err).Msgf("Failed to fetch external identities for lightweight user")
+		}
+		uid.ExternalIdentities = extIds
+		uids = list.Map(uid.ExternalIdentities, func(id *userpb.ExternalIdentity) string { return id.OpaqueId })
+	} else {
+		uids = []string{uid.OpaqueId}
 	}
 
-	groups = list.Map(r.Data, func(g Group) string { return strings.ToLower(g.GroupIdentifier) })
+	for _, id := range uids {
+		// no pagination here because a user can be member of 1010 groups at most (Microsoft AD hardcoded limitation)
+		url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, id)
+		var r GroupsResponse
+		if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
+			return nil, err
+		}
 
-	if err = m.cacheUserGroups(uid, groups); err != nil {
+		fetchedGroups := list.Map(r.Data, func(g Group) string { return strings.ToLower(g.GroupIdentifier) })
+		groups.Add(fetchedGroups...)
+	}
+
+	if err := m.cacheUserGroups(uid, groups.Values()); err != nil {
 		log := appctx.GetLogger(ctx)
 		log.Error().Err(err).Msg("rest: error caching user groups")
 	}
 
-	return groups, nil
+	return groups.Values(), nil
 }
 
 func (m *manager) IsInGroup(ctx context.Context, uid *userpb.UserId, group string) (bool, error) {
