@@ -1,4 +1,4 @@
-// Copyright 2018-2023 CERN
+// Copyright 2018-2026 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	redispools "github.com/cernbox/reva-plugins/redispools"
 	"github.com/cernbox/reva-plugins/utils"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	"github.com/cs3org/reva/v3"
@@ -36,7 +37,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/user"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/cs3org/reva/v3/pkg/utils/list"
-	"github.com/gomodule/redigo/redis"
 )
 
 func init() {
@@ -45,7 +45,7 @@ func init() {
 
 type manager struct {
 	conf            *config
-	redisPool       *redis.Pool
+	redisPools      *redispools.RedisPools
 	apiTokenManager *revautils.APITokenManager
 }
 
@@ -59,10 +59,16 @@ func (manager) RevaPlugin() reva.PluginInfo {
 type config struct {
 	// The address at which the redis server is running
 	RedisAddress string `mapstructure:"redis_address" docs:"localhost:6379"`
+	// The address at which the redis sentinel is running (only used when redis_sentinel_mode is enabled)
+	RedisSentinelAddress string `mapstructure:"redis_sentinel_address" docs:""`
 	// The username for connecting to the redis server
 	RedisUsername string `mapstructure:"redis_username" docs:""`
 	// The password for connecting to the redis server
 	RedisPassword string `mapstructure:"redis_password" docs:""`
+	// The name of the master node in case Redis Sentinel mode is enabled
+	RedisMasterName string `mapstructure:"redis_master_name" docs:""`
+	// Whether to use Redis Sentinel mode
+	RedisSentinelMode bool `mapstructure:"redis_sentinel_mode" docs:""`
 	// The time in minutes for which the groups to which a user belongs would be cached
 	UserGroupsCacheExpiration int `mapstructure:"user_groups_cache_expiration" docs:"5"`
 	// The OIDC Provider
@@ -89,6 +95,10 @@ func (c *config) ApplyDefaults() {
 	if c.RedisAddress == "" {
 		c.RedisAddress = ":6379"
 	}
+	if c.RedisSentinelAddress == "" {
+		// Backwards compatible default: if not set, assume sentinel is reachable at RedisAddress.
+		c.RedisSentinelAddress = c.RedisAddress
+	}
 	if c.APIBaseURL == "" {
 		c.APIBaseURL = "https://authorization-service-api-dev.web.cern.ch"
 	}
@@ -109,25 +119,32 @@ func (c *config) ApplyDefaults() {
 // New returns a user manager implementation that makes calls to the GRAPPA API.
 func New(ctx context.Context, m map[string]interface{}) (user.Manager, error) {
 	mgr := &manager{}
-	err := mgr.Configure(m)
+	err := mgr.Configure(m, ctx)
 	if err != nil {
 		return nil, err
 	}
 	return mgr, err
 }
 
-func (m *manager) Configure(ml map[string]interface{}) error {
+func (m *manager) Configure(ml map[string]interface{}, ctx context.Context) error {
 	var c config
 	if err := cfg.Decode(ml, &c); err != nil {
 		return err
 	}
-	redisPool := initRedisPool(c.RedisAddress, c.RedisUsername, c.RedisPassword)
+	c.ApplyDefaults()
+
+	pools, err := redispools.NewRedisPoolsWithSentinelAddress(ctx, c.RedisAddress, c.RedisSentinelAddress, c.RedisUsername, c.RedisPassword, c.RedisSentinelMode, c.RedisMasterName)
+	if err != nil {
+		appctx.GetLogger(ctx).Error().Err(err).Msg("rest: failed to initialize redis pools")
+		pools = &redispools.RedisPools{}
+	}
+
 	apiTokenManager, err := revautils.InitAPITokenManager(ml)
 	if err != nil {
 		return err
 	}
 	m.conf = &c
-	m.redisPool = redisPool
+	m.redisPools = pools
 	m.apiTokenManager = apiTokenManager
 
 	// Since we're starting a subroutine which would take some time to execute,
@@ -138,7 +155,11 @@ func (m *manager) Configure(ml map[string]interface{}) error {
 }
 
 func (m *manager) fetchAllUsers(ctx context.Context) {
-	_ = m.fetchAllUserAccounts(ctx)
+	log := appctx.GetLogger(ctx)
+	if err := m.fetchAllUserAccounts(ctx); err != nil {
+		log.Error().Err(err).Msg("rest: failed to fetch user accounts on startup")
+	}
+
 	ticker := time.NewTicker(time.Duration(m.conf.UserFetchInterval) * time.Second)
 	work := make(chan os.Signal, 1)
 	signal.Notify(work, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
@@ -148,7 +169,9 @@ func (m *manager) fetchAllUsers(ctx context.Context) {
 		case <-work:
 			return
 		case <-ticker.C:
-			_ = m.fetchAllUserAccounts(ctx)
+			if err := m.fetchAllUserAccounts(ctx); err != nil {
+				log.Error().Err(err).Msg("rest: failed to fetch user accounts periodically")
+			}
 		}
 	}
 }
@@ -275,7 +298,7 @@ func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]
 }
 
 func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingGroups bool) (*userpb.User, error) {
-	u, err := m.fetchCachedUserDetails(uid)
+	u, err := m.fetchCachedUserDetails(ctx, uid)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +315,7 @@ func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingG
 }
 
 func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipFetchingGroups bool) (*userpb.User, error) {
-	u, err := m.fetchCachedUserByParam(claim, value)
+	u, err := m.fetchCachedUserByParam(ctx, claim, value)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +345,7 @@ func (m *manager) FindUsers(ctx context.Context, query string, filters []*userpb
 		namespace, query = parts[0], parts[1]
 	}
 
-	users, err := m.findCachedUsers(query)
+	users, err := m.findCachedUsers(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +413,7 @@ type GroupsResponse struct {
 }
 
 func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]string, error) {
-	cachedGroups, err := m.fetchCachedUserGroups(uid)
+	cachedGroups, err := m.fetchCachedUserGroups(ctx, uid)
 	if err == nil {
 		return cachedGroups, nil
 	}
@@ -426,7 +449,11 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 
 	if err := m.cacheUserGroups(uid, groups.Values()); err != nil {
 		log := appctx.GetLogger(ctx)
-		log.Error().Err(err).Msg("rest: error caching user groups")
+		if m.conf.RedisSentinelMode {
+			log.Error().Str("sentinelAddress", m.conf.RedisSentinelAddress).Msg("rest: error caching user groups in Sentinel mode, check Sentinel connectivity and master discovery")
+		} else {
+			log.Error().Str("redisAddress", m.conf.RedisAddress).Msg("rest: error caching user groups, check Redis connectivity")
+		}
 	}
 
 	return groups.Values(), nil

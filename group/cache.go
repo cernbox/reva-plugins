@@ -1,4 +1,4 @@
-// Copyright 2018-2023 CERN
+// Copyright 2018-2026 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,15 +19,15 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	grouppb "github.com/cs3org/go-cs3apis/cs3/identity/group/v1beta1"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
+	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/gomodule/redigo/redis"
 )
 
@@ -40,116 +40,47 @@ const (
 	groupInternalIDPrefix = "internal:"
 )
 
-func initRedisPool(address, username, password string) *redis.Pool {
-	return &redis.Pool{
+func (m *manager) findCachedGroups(ctx context.Context, query string) ([]*grouppb.Group, error) {
+	query = fmt.Sprintf("%s*%s*", groupPrefix, strings.ReplaceAll(strings.ToLower(query), " ", "_"))
+	log := appctx.GetLogger(ctx)
 
-		MaxIdle:     50,
-		MaxActive:   1000,
-		IdleTimeout: 240 * time.Second,
-
-		Dial: func() (redis.Conn, error) {
-			var c redis.Conn
-			var err error
-			switch {
-			case username != "":
-				c, err = redis.Dial("tcp", address,
-					redis.DialUsername(username),
-					redis.DialPassword(password),
-				)
-			case password != "":
-				c, err = redis.Dial("tcp", address,
-					redis.DialPassword(password),
-				)
-			default:
-				c, err = redis.Dial("tcp", address)
-			}
-
-			if err != nil {
-				return nil, err
-			}
-			return c, err
-		},
-
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
-		},
-	}
-}
-
-func (m *manager) setVal(key, val string, expiration int) error {
-	conn := m.redisPool.Get()
-	defer conn.Close()
-	if conn != nil {
-		args := []interface{}{key, val}
-		if expiration != -1 {
-			args = append(args, "EX", expiration)
-		}
-		if _, err := conn.Do("SET", args...); err != nil {
-			return err
-		}
-		return nil
-	}
-	return errors.New("rest: unable to get connection from redis pool")
-}
-
-func (m *manager) getVal(key string) (string, error) {
-	conn := m.redisPool.Get()
-	defer conn.Close()
-	if conn != nil {
-		val, err := redis.String(conn.Do("GET", key))
-		if err != nil {
-			return "", err
-		}
-		return val, nil
-	}
-	return "", errors.New("rest: unable to get connection from redis pool")
-}
-
-func (m *manager) findCachedGroups(query string) ([]*grouppb.Group, error) {
-	conn := m.redisPool.Get()
-	defer conn.Close()
-	if conn != nil {
-		query = fmt.Sprintf("%s*%s*", groupPrefix, strings.ReplaceAll(strings.ToLower(query), " ", "_"))
+	raw, err := m.redisPools.DoWithReadFallback(ctx, func(conn redis.Conn) (interface{}, error) {
 		keys, err := redis.Strings(conn.Do("KEYS", query))
 		if err != nil {
 			return nil, err
 		}
-		var args []interface{}
-		for _, k := range keys {
-			args = append(args, k)
+		if len(keys) == 0 {
+			return []string{}, nil
 		}
-
-		if len(args) == 0 {
-			return []*grouppb.Group{}, nil
+		args := make([]interface{}, len(keys))
+		for i, k := range keys {
+			args[i] = k
 		}
-
-		// Fetch the groups for all these keys
-		groupStrings, err := redis.Strings(conn.Do("MGET", args...))
-		if err != nil {
-			return nil, err
-		}
-		groupMap := make(map[string]*grouppb.Group)
-		for _, group := range groupStrings {
-			g := grouppb.Group{}
-			if err = json.Unmarshal([]byte(group), &g); err == nil {
-				groupMap[g.Id.OpaqueId] = &g
-			}
-		}
-
-		var groups []*grouppb.Group
-		for _, g := range groupMap {
-			groups = append(groups, g)
-		}
-
-		return groups, nil
+		return redis.Strings(conn.Do("MGET", args...))
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, errors.New("rest: unable to get connection from redis pool")
+	groupStrings := raw.([]string)
+	groupMap := make(map[string]*grouppb.Group)
+	for _, group := range groupStrings {
+		g := grouppb.Group{}
+		if err = json.Unmarshal([]byte(group), &g); err == nil {
+			groupMap[g.Id.OpaqueId] = &g
+		}
+	}
+
+	groups := make([]*grouppb.Group, 0, len(groupMap))
+	for _, g := range groupMap {
+		groups = append(groups, g)
+	}
+	log.Debug().Any("query", query).Int("results", len(groups)).Msg("rest: successfully found cached groups")
+	return groups, nil
 }
 
-func (m *manager) fetchCachedGroupDetails(gid *grouppb.GroupId) (*grouppb.Group, error) {
-	group, err := m.getVal(groupPrefix + idPrefix + gid.OpaqueId)
+func (m *manager) fetchCachedGroupDetails(ctx context.Context, gid *grouppb.GroupId) (*grouppb.Group, error) {
+	group, err := m.redisPools.GetVal(ctx, groupPrefix+idPrefix+gid.OpaqueId)
 	if err != nil {
 		return nil, err
 	}
@@ -166,25 +97,25 @@ func (m *manager) cacheGroupDetails(g *grouppb.Group) error {
 	if err != nil {
 		return err
 	}
-	if err = m.setVal(groupPrefix+idPrefix+strings.ToLower(g.Id.OpaqueId), string(encodedGroup), 5*m.conf.GroupFetchInterval); err != nil {
+	if err = m.redisPools.SetVal(groupPrefix+idPrefix+strings.ToLower(g.Id.OpaqueId), string(encodedGroup), 5*m.conf.GroupFetchInterval); err != nil {
 		return err
 	}
 
 	if g.GidNumber != 0 {
-		if err = m.setVal(groupPrefix+gidPrefix+strconv.FormatInt(g.GidNumber, 10), g.Id.OpaqueId, 5*m.conf.GroupFetchInterval); err != nil {
+		if err = m.redisPools.SetVal(groupPrefix+gidPrefix+strconv.FormatInt(g.GidNumber, 10), g.Id.OpaqueId, 5*m.conf.GroupFetchInterval); err != nil {
 			return err
 		}
 	}
 	if g.DisplayName != "" {
-		if err = m.setVal(groupPrefix+namePrefix+g.Id.OpaqueId+"_"+strings.ToLower(g.DisplayName), g.Id.OpaqueId, 5*m.conf.GroupFetchInterval); err != nil {
+		if err = m.redisPools.SetVal(groupPrefix+namePrefix+g.Id.OpaqueId+"_"+strings.ToLower(g.DisplayName), g.Id.OpaqueId, 5*m.conf.GroupFetchInterval); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *manager) fetchCachedGroupByParam(field, claim string) (*grouppb.Group, error) {
-	group, err := m.getVal(groupPrefix + field + ":" + strings.ToLower(claim))
+func (m *manager) fetchCachedGroupByParam(ctx context.Context, field, claim string) (*grouppb.Group, error) {
+	group, err := m.redisPools.GetVal(ctx, groupPrefix+field+":"+strings.ToLower(claim))
 	if err != nil {
 		return nil, err
 	}
@@ -196,8 +127,8 @@ func (m *manager) fetchCachedGroupByParam(field, claim string) (*grouppb.Group, 
 	return &g, nil
 }
 
-func (m *manager) fetchCachedGroupMembers(gid *grouppb.GroupId) ([]*userpb.UserId, error) {
-	members, err := m.getVal(groupPrefix + groupMembersPrefix + strings.ToLower(gid.OpaqueId))
+func (m *manager) fetchCachedGroupMembers(ctx context.Context, gid *grouppb.GroupId) ([]*userpb.UserId, error) {
+	members, err := m.redisPools.GetVal(ctx, groupPrefix+groupMembersPrefix+strings.ToLower(gid.OpaqueId))
 	if err != nil {
 		return nil, err
 	}
@@ -213,5 +144,5 @@ func (m *manager) cacheGroupMembers(gid *grouppb.GroupId, members []*userpb.User
 	if err != nil {
 		return err
 	}
-	return m.setVal(groupPrefix+groupMembersPrefix+strings.ToLower(gid.OpaqueId), string(u), m.conf.GroupMembersCacheExpiration*60)
+	return m.redisPools.SetVal(groupPrefix+groupMembersPrefix+strings.ToLower(gid.OpaqueId), string(u), m.conf.GroupMembersCacheExpiration*60)
 }

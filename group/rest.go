@@ -1,4 +1,4 @@
-// Copyright 2018-2023 CERN
+// Copyright 2018-2026 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	redispools "github.com/cernbox/reva-plugins/redispools"
 	user "github.com/cernbox/reva-plugins/user"
 	grouppb "github.com/cs3org/go-cs3apis/cs3/identity/group/v1beta1"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
@@ -36,7 +37,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/group"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/cs3org/reva/v3/pkg/utils/list"
-	"github.com/gomodule/redigo/redis"
 	"github.com/rs/zerolog/log"
 )
 
@@ -46,7 +46,7 @@ func init() {
 
 type manager struct {
 	conf            *config
-	redisPool       *redis.Pool
+	redisPools      *redispools.RedisPools
 	apiTokenManager *utils.APITokenManager
 }
 
@@ -60,10 +60,16 @@ func (manager) RevaPlugin() reva.PluginInfo {
 type config struct {
 	// The address at which the redis server is running
 	RedisAddress string `mapstructure:"redis_address" docs:"localhost:6379"`
+	// The address at which the redis sentinel is running (only used when redis_sentinel_mode is enabled)
+	RedisSentinelAddress string `mapstructure:"redis_sentinel_address" docs:""`
 	// The username for connecting to the redis server
 	RedisUsername string `mapstructure:"redis_username" docs:""`
 	// The password for connecting to the redis server
 	RedisPassword string `mapstructure:"redis_password" docs:""`
+	// The name of the master node in case Redis Sentinel mode is enabled
+	RedisMasterName string `mapstructure:"redis_master_name" docs:""`
+	// Whether to use Redis Sentinel mode
+	RedisSentinelMode bool `mapstructure:"redis_sentinel_mode" docs:""`
 	// The time in minutes for which the members of a group would be cached
 	GroupMembersCacheExpiration int `mapstructure:"group_members_cache_expiration" docs:"5"`
 	// The OIDC Provider
@@ -90,6 +96,9 @@ func (c *config) ApplyDefaults() {
 	if c.RedisAddress == "" {
 		c.RedisAddress = ":6379"
 	}
+	if c.RedisSentinelAddress == "" {
+		c.RedisSentinelAddress = c.RedisAddress
+	}
 	if c.APIBaseURL == "" {
 		c.APIBaseURL = "https://authorization-service-api-dev.web.cern.ch"
 	}
@@ -113,8 +122,13 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 	if err := cfg.Decode(m, &c); err != nil {
 		return nil, err
 	}
+	c.ApplyDefaults()
 
-	redisPool := initRedisPool(c.RedisAddress, c.RedisUsername, c.RedisPassword)
+	pools, err := redispools.NewRedisPoolsWithSentinelAddress(ctx, c.RedisAddress, c.RedisSentinelAddress, c.RedisUsername, c.RedisPassword, c.RedisSentinelMode, c.RedisMasterName)
+	if err != nil {
+		appctx.GetLogger(ctx).Error().Err(err).Msg("rest: failed to initialize redis pools")
+		pools = &redispools.RedisPools{}
+	}
 	apiTokenManager, err := utils.InitAPITokenManager(m)
 	if err != nil {
 		return nil, err
@@ -122,7 +136,7 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 
 	mgr := &manager{
 		conf:            &c,
-		redisPool:       redisPool,
+		redisPools:      pools,
 		apiTokenManager: apiTokenManager,
 	}
 	go mgr.fetchAllGroups(context.Background())
@@ -212,7 +226,7 @@ func (m *manager) parseAndCacheGroup(ctx context.Context, g *Group) (*grouppb.Gr
 }
 
 func (m *manager) GetGroup(ctx context.Context, gid *grouppb.GroupId, skipFetchingMembers bool) (*grouppb.Group, error) {
-	g, err := m.fetchCachedGroupDetails(gid)
+	g, err := m.fetchCachedGroupDetails(ctx, gid)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +247,7 @@ func (m *manager) GetGroupByClaim(ctx context.Context, claim, value string, skip
 		return m.GetGroup(ctx, &grouppb.GroupId{OpaqueId: value}, skipFetchingMembers)
 	}
 
-	g, err := m.fetchCachedGroupByParam(claim, value)
+	g, err := m.fetchCachedGroupByParam(ctx, claim, value)
 	if err != nil {
 		return nil, err
 	}
@@ -264,11 +278,11 @@ func (m *manager) FindGroups(ctx context.Context, query string, skipFetchingMemb
 		}
 	}
 
-	return m.findCachedGroups(query)
+	return m.findCachedGroups(ctx, query)
 }
 
 func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*userpb.UserId, error) {
-	users, err := m.fetchCachedGroupMembers(gid)
+	users, err := m.fetchCachedGroupMembers(ctx, gid)
 	if err == nil {
 		return users, nil
 	}
