@@ -27,6 +27,7 @@ import (
 	"time"
 
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
+	"github.com/cs3org/reva/v3/pkg/errtypes"
 	"github.com/gomodule/redigo/redis"
 )
 
@@ -182,6 +183,12 @@ func (m *manager) cacheUserDetails(u *userpb.User) error {
 }
 
 func (m *manager) fetchCachedUserByParam(field, claim string) (*userpb.User, error) {
+	// We do not want to support linked external accounts
+	// These can be identified by having username equal to a CERN email
+	if field == "username" && strings.HasSuffix(claim, "@cern.ch") {
+		return nil, errtypes.Conflict("linked external accounts are not supported")
+	}
+
 	user, err := m.getVal(userPrefix + field + ":" + strings.ToLower(claim))
 	if err != nil {
 		return nil, err
