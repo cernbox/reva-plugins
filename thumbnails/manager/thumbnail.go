@@ -39,6 +39,8 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+
+	_ "golang.org/x/image/tiff"
 )
 
 // FileType is the output format of the thumbnail
