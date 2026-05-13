@@ -1,4 +1,4 @@
-// Copyright 2018-2023 CERN
+// Copyright 2018-2026 CERN
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,14 +19,14 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
+	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
 	"github.com/gomodule/redigo/redis"
 )
@@ -40,91 +40,29 @@ const (
 	userGroupsPrefix = "groups:"
 )
 
-func initRedisPool(address, username, password string) *redis.Pool {
-	return &redis.Pool{
-
-		MaxIdle:     50,
-		MaxActive:   1000,
-		IdleTimeout: 240 * time.Second,
-
-		Dial: func() (redis.Conn, error) {
-			var opts []redis.DialOption
-			if username != "" {
-				opts = append(opts, redis.DialUsername(username))
-			}
-			if password != "" {
-				opts = append(opts, redis.DialPassword(password))
-			}
-
-			c, err := redis.Dial("tcp", address, opts...)
-			if err != nil {
-				return nil, err
-			}
-			return c, err
-		},
-
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			_, err := c.Do("PING")
-			return err
-		},
-	}
-}
-
-func (m *manager) setVal(key, val string, expiration int) error {
-	conn := m.redisPool.Get()
-	defer conn.Close()
-	if conn != nil {
-		args := []interface{}{key, val}
-		if expiration != -1 {
-			args = append(args, "EX", expiration)
-		}
-		if _, err := conn.Do("SET", args...); err != nil {
-			return err
-		}
-		return nil
-	}
-	return errors.New("rest: unable to get connection from redis pool")
-}
-
-func (m *manager) getVal(key string) (string, error) {
-	conn := m.redisPool.Get()
-	defer conn.Close()
-	if conn != nil {
-		val, err := redis.String(conn.Do("GET", key))
-		if err != nil {
-			return "", err
-		}
-		return val, nil
-	}
-	return "", errors.New("rest: unable to get connection from redis pool")
-}
-
-func (m *manager) findCachedUsers(query string) ([]*userpb.User, error) {
-	conn := m.redisPool.Get()
-	if conn == nil {
-		return nil, errors.New("rest: unable to get connection from redis pool")
-	}
-	defer conn.Close()
-
+func (m *manager) findCachedUsers(ctx context.Context, query string) ([]*userpb.User, error) {
 	query = fmt.Sprintf("%s*%s*", userPrefix, strings.ReplaceAll(strings.ToLower(query), " ", "_"))
-	keys, err := redis.Strings(conn.Do("KEYS", query))
+	log := appctx.GetLogger(ctx)
+
+	raw, err := m.redisPools.DoWithReadFallback(ctx, func(conn redis.Conn) (interface{}, error) {
+		keys, err := redis.Strings(conn.Do("KEYS", query))
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) == 0 {
+			return []string{}, nil
+		}
+		args := make([]interface{}, len(keys))
+		for i, k := range keys {
+			args[i] = k
+		}
+		return redis.Strings(conn.Do("MGET", args...))
+	})
 	if err != nil {
 		return nil, err
 	}
-	var args []interface{}
-	for _, k := range keys {
-		args = append(args, k)
-	}
 
-	if len(args) == 0 {
-		return []*userpb.User{}, nil
-	}
-
-	// Fetch the users for all these keys
-	userStrings, err := redis.Strings(conn.Do("MGET", args...))
-	if err != nil {
-		return nil, err
-	}
+	userStrings := raw.([]string)
 	userMap := make(map[string]*userpb.User)
 	for _, user := range userStrings {
 		u := userpb.User{}
@@ -133,17 +71,16 @@ func (m *manager) findCachedUsers(query string) ([]*userpb.User, error) {
 		}
 	}
 
-	var users []*userpb.User
+	users := make([]*userpb.User, 0, len(userMap))
 	for _, u := range userMap {
 		users = append(users, u)
 	}
-
+	log.Debug().Any("query", query).Int("results", len(users)).Msg("rest: successfully found cached users")
 	return users, nil
-
 }
 
-func (m *manager) fetchCachedUserDetails(uid *userpb.UserId) (*userpb.User, error) {
-	user, err := m.getVal(userPrefix + usernamePrefix + strings.ToLower(uid.OpaqueId))
+func (m *manager) fetchCachedUserDetails(ctx context.Context, uid *userpb.UserId) (*userpb.User, error) {
+	user, err := m.redisPools.GetVal(ctx, userPrefix+usernamePrefix+strings.ToLower(uid.OpaqueId))
 	if err != nil {
 		return nil, err
 	}
@@ -160,36 +97,36 @@ func (m *manager) cacheUserDetails(u *userpb.User) error {
 	if err != nil {
 		return err
 	}
-	if err = m.setVal(userPrefix+usernamePrefix+strings.ToLower(u.Id.OpaqueId), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
+	if err = m.redisPools.SetVal(userPrefix+usernamePrefix+strings.ToLower(u.Id.OpaqueId), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
 		return err
 	}
 
 	if u.Mail != "" {
-		if err = m.setVal(userPrefix+mailPrefix+strings.ToLower(u.Mail), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
+		if err = m.redisPools.SetVal(userPrefix+mailPrefix+strings.ToLower(u.Mail), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
 			return err
 		}
 	}
 	if u.DisplayName != "" {
-		if err = m.setVal(userPrefix+namePrefix+u.Id.OpaqueId+"_"+strings.ReplaceAll(strings.ToLower(u.DisplayName), " ", "_"), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
+		if err = m.redisPools.SetVal(userPrefix+namePrefix+u.Id.OpaqueId+"_"+strings.ReplaceAll(strings.ToLower(u.DisplayName), " ", "_"), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
 			return err
 		}
 	}
 	if u.UidNumber != 0 {
-		if err = m.setVal(userPrefix+uidPrefix+strconv.FormatInt(u.UidNumber, 10), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
+		if err = m.redisPools.SetVal(userPrefix+uidPrefix+strconv.FormatInt(u.UidNumber, 10), string(encodedUser), 5*m.conf.UserFetchInterval); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (m *manager) fetchCachedUserByParam(field, claim string) (*userpb.User, error) {
+func (m *manager) fetchCachedUserByParam(ctx context.Context, field, claim string) (*userpb.User, error) {
 	// We do not want to support linked external accounts
 	// These can be identified by having username equal to a CERN email
 	if field == "username" && strings.HasSuffix(claim, "@cern.ch") {
 		return nil, errtypes.Conflict("linked external accounts are not supported")
 	}
 
-	user, err := m.getVal(userPrefix + field + ":" + strings.ToLower(claim))
+	user, err := m.redisPools.GetVal(ctx, userPrefix+field+":"+strings.ToLower(claim))
 	if err != nil {
 		return nil, err
 	}
@@ -201,8 +138,8 @@ func (m *manager) fetchCachedUserByParam(field, claim string) (*userpb.User, err
 	return &u, nil
 }
 
-func (m *manager) fetchCachedUserGroups(uid *userpb.UserId) ([]string, error) {
-	groups, err := m.getVal(userPrefix + userGroupsPrefix + strings.ToLower(uid.OpaqueId))
+func (m *manager) fetchCachedUserGroups(ctx context.Context, uid *userpb.UserId) ([]string, error) {
+	groups, err := m.redisPools.GetVal(ctx, userPrefix+userGroupsPrefix+strings.ToLower(uid.OpaqueId))
 	if err != nil {
 		return nil, err
 	}
@@ -218,5 +155,5 @@ func (m *manager) cacheUserGroups(uid *userpb.UserId, groups []string) error {
 	if err != nil {
 		return err
 	}
-	return m.setVal(userPrefix+userGroupsPrefix+strings.ToLower(uid.OpaqueId), string(g), m.conf.UserGroupsCacheExpiration*60)
+	return m.redisPools.SetVal(userPrefix+userGroupsPrefix+strings.ToLower(uid.OpaqueId), string(g), m.conf.UserGroupsCacheExpiration*60)
 }
