@@ -67,7 +67,9 @@ func (m *manager) findCachedUsers(ctx context.Context, query string) ([]*userpb.
 	for _, user := range userStrings {
 		u := userpb.User{}
 		if err = json.Unmarshal([]byte(user), &u); err == nil {
-			userMap[u.Id.OpaqueId] = &u
+			if u.Id != nil && u.Id.OpaqueId != "" {
+				userMap[u.Id.OpaqueId] = &u
+			}
 		}
 	}
 
