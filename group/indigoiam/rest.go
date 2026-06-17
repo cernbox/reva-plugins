@@ -50,6 +50,7 @@ func init() {
 type manager struct {
 	conf       *config
 	cache      *cache.GroupCache
+	userCache  *cache.UserCache // read-only access, for IAM-UUID -> OpaqueId resolution
 	httpClient *http.Client
 }
 
@@ -177,6 +178,13 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 	mgr := &manager{
 		conf:  &c,
 		cache: cache.NewGroupCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
+		// UserGroupsCacheExpiration doesn't apply here since this UserCache
+		// instance is only ever used for GetIAMUUID/GetOpaqueIDByIAMUUID
+		// lookups, not for storing users or groups membership. The TTL
+		// arguments only affect StoreUser/StoreGroups, which this driver
+		// never calls, so any values are safe; we reuse the group driver's
+		// own fetch interval for consistency.
+		userCache: cache.NewUserCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
 		httpClient: &http.Client{
 			Transport: tr,
 			Timeout:   time.Duration(c.HTTPTimeoutSeconds) * time.Second,
@@ -332,10 +340,19 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 			if !acc.Active {
 				continue
 			}
+
+			opaqueID := acc.ID
+			userType := userpb.UserType_USER_TYPE_LIGHTWEIGHT
+
+			if mapped, err := m.userCache.GetOpaqueIDByIAMUUID(ctx, acc.ID); err == nil {
+				opaqueID = mapped
+				userType = userpb.UserType_USER_TYPE_PRIMARY
+			}
+
 			members = append(members, &userpb.UserId{
-				OpaqueId: acc.ID,
+				OpaqueId: opaqueID,
 				Idp:      m.conf.IDProvider,
-				Type:     userpb.UserType_USER_TYPE_PRIMARY,
+				Type:     userType,
 			})
 		}
 
