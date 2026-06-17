@@ -27,8 +27,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cernbox/reva-plugins/cache"
 	redispools "github.com/cernbox/reva-plugins/redispools"
-	user "github.com/cernbox/reva-plugins/user"
+	userrest "github.com/cernbox/reva-plugins/user/rest"
 	grouppb "github.com/cs3org/go-cs3apis/cs3/identity/group/v1beta1"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	"github.com/cs3org/reva/v3"
@@ -46,7 +47,7 @@ func init() {
 
 type manager struct {
 	conf            *config
-	redisPools      *redispools.RedisPools
+	cache           *cache.GroupCache
 	apiTokenManager *utils.APITokenManager
 }
 
@@ -136,7 +137,7 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 
 	mgr := &manager{
 		conf:            &c,
-		redisPools:      pools,
+		cache:           cache.NewGroupCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
 		apiTokenManager: apiTokenManager,
 	}
 	go mgr.fetchAllGroups(context.Background())
@@ -218,7 +219,7 @@ func (m *manager) parseAndCacheGroup(ctx context.Context, g *Group) (*grouppb.Gr
 		GidNumber:   int64(g.GID),
 	}
 
-	if err := m.cacheGroupDetails(group); err != nil {
+	if err := m.cache.StoreGroup(group); err != nil {
 		log.Error().Err(err).Msg("rest: error caching group details")
 	}
 
@@ -226,7 +227,7 @@ func (m *manager) parseAndCacheGroup(ctx context.Context, g *Group) (*grouppb.Gr
 }
 
 func (m *manager) GetGroup(ctx context.Context, gid *grouppb.GroupId, skipFetchingMembers bool) (*grouppb.Group, error) {
-	g, err := m.fetchCachedGroupDetails(ctx, gid)
+	g, err := m.cache.GetByID(ctx, gid.OpaqueId)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +248,7 @@ func (m *manager) GetGroupByClaim(ctx context.Context, claim, value string, skip
 		return m.GetGroup(ctx, &grouppb.GroupId{OpaqueId: value}, skipFetchingMembers)
 	}
 
-	g, err := m.fetchCachedGroupByParam(ctx, claim, value)
+	g, err := m.cache.GetByName(ctx, value)
 	if err != nil {
 		return nil, err
 	}
@@ -278,25 +279,25 @@ func (m *manager) FindGroups(ctx context.Context, query string, skipFetchingMemb
 		}
 	}
 
-	return m.findCachedGroups(ctx, query)
+	return m.cache.Find(ctx, query)
 }
 
 func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*userpb.UserId, error) {
-	users, err := m.fetchCachedGroupMembers(ctx, gid)
+	users, err := m.cache.GetMembers(ctx, gid.OpaqueId)
 	if err == nil {
 		return users, nil
 	}
 
 	url := fmt.Sprintf("%s/api/v1.0/Group/%s/memberidentities/recursive?limit=10&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source", m.conf.APIBaseURL, gid.OpaqueId)
 
-	var r user.IdentitiesResponse
+	var r userrest.IdentitiesResponse
 	members := []*userpb.UserId{}
 	for {
 		if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
 			return nil, err
 		}
 
-		users := list.Map(r.Data, func(i *user.Identity) *userpb.UserId {
+		users := list.Map(r.Data, func(i *userrest.Identity) *userpb.UserId {
 			return &userpb.UserId{OpaqueId: i.Upn, Idp: m.conf.IDProvider, Type: i.UserType()}
 		})
 		members = append(members, users...)
@@ -307,11 +308,11 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		url = fmt.Sprintf("%s%s", m.conf.APIBaseURL, *r.Pagination.Next)
 	}
 
-	if err = m.cacheGroupMembers(gid, members); err != nil {
+	if err = m.cache.StoreMembers(gid, members); err != nil {
 		appctx.GetLogger(ctx).Error().Err(err).Msg("rest: error caching group members")
 	}
 
-	return users, nil
+	return members, nil
 }
 
 func (m *manager) HasMember(ctx context.Context, gid *grouppb.GroupId, uid *userpb.UserId) (bool, error) {
