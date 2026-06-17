@@ -51,6 +51,12 @@ type manager struct {
 	httpClient *http.Client
 }
 
+type primaryUser struct {
+	username   string
+	uid_number int64
+	gid_number int64
+}
+
 func (manager) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "grpc.services.userprovider.drivers.indigo-iam",
@@ -75,6 +81,14 @@ type config struct {
 	UserFetchInterval         int `mapstructure:"user_fetch_interval"          docs:"3600"`
 	UserGroupsCacheExpiration int `mapstructure:"user_groups_cache_expiration" docs:"5"`
 	PageSize                  int `mapstructure:"page_size"                    docs:"100"`
+
+	// PrimaryUsers maps an IAM account UUID to an internal user with the given
+	// username, uid and gid, and marks that user as USER_TYPE_PRIMARY. Every other
+	// user is treated as USER_TYPE_LIGHTWEIGHT. This is needed because IAM
+	// has no native concept of primary vs. lightweight accounts: by default
+	// every account looks the same, so an explicit allowlist is required to
+	// recognize the subset of "real" organization members.
+	PrimaryUsers map[string]primaryUser `mapstructure:"primary_users" docs:"{}"`
 }
 
 func (c *config) ApplyDefaults() {
@@ -261,9 +275,16 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 			if !acc.Active {
 				continue
 			}
-			u := m.accountToProto(acc)
+			u, remapped := m.accountToProto(acc)
 			if err := m.cache.StoreUser(u); err != nil {
 				log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: cache error")
+			}
+			// Only the exceptional, remapped case needs a reverse-index
+			// entry; lightweight users already have OpaqueId == IAM UUID.
+			if remapped {
+				if err := m.cache.StoreIAMUUID(u.Id.OpaqueId, acc.ID); err != nil {
+					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to cache IAM UUID mapping")
+				}
 			}
 		}
 
@@ -276,17 +297,36 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 	return nil
 }
 
-func (m *manager) accountToProto(acc *iamAccount) *userpb.User {
+// accountToProto converts an iamAccount to the CS3 userpb.User type.
+// If acc.ID is a key in conf.PrimaryUsers, the OpaqueId is replaced by the
+// mapped value and the user is marked PRIMARY; otherwise the user is
+// LIGHTWEIGHT and keeps its original IAM UUID as OpaqueId.
+func (m *manager) accountToProto(acc *iamAccount) (*userpb.User, bool) {
+	opaqueID := acc.ID
+	userType := userpb.UserType_USER_TYPE_LIGHTWEIGHT
+	uid := int64(0)
+	gid := int64(0)
+	remapped := false
+
+	if mapped, remapped := m.conf.PrimaryUsers[acc.ID]; remapped {
+		opaqueID = mapped.username
+		uid = int64(mapped.uid_number)
+		gid = int64(mapped.gid_number)
+		userType = userpb.UserType_USER_TYPE_PRIMARY
+	}
+
 	return &userpb.User{
 		Id: &userpb.UserId{
-			OpaqueId: acc.ID,
+			OpaqueId: opaqueID,
 			Idp:      m.conf.IDProvider,
-			Type:     userpb.UserType_USER_TYPE_PRIMARY,
+			Type:     userType,
 		},
 		Username:    acc.UserName,
 		Mail:        acc.primaryEmail(),
 		DisplayName: acc.DisplayName,
-	}
+		UidNumber:   uid,
+		GidNumber:   gid,
+	}, remapped
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +404,15 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 		return cached, nil
 	}
 
-	url := fmt.Sprintf("%s/iam/account/%s/groups", m.conf.IAMBaseURL, uid.OpaqueId)
+	iamUUID, err := m.cache.GetIAMUUID(ctx, uid.OpaqueId)
+	if err != nil {
+		// No mapping found — assume the OpaqueId is already the IAM UUID
+		// (this is always true for lightweight users, since they are never
+		// remapped).
+		iamUUID = uid.OpaqueId
+	}
+
+	url := fmt.Sprintf("%s/iam/account/%s/groups", m.conf.IAMBaseURL, iamUUID)
 	var list iamGroupList
 	if err := m.iamGET(ctx, url, &list); err != nil {
 		return nil, err

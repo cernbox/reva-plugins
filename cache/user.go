@@ -20,11 +20,13 @@ import (
 //   user:groups:<opaqueID>                      → JSON []string
 
 const (
-	userIDPrefix       = "user:id:"
-	userUsernamePrefix = "user:username:"
-	userMailPrefix     = "user:mail:"
-	userNamePrefix     = "user:name:"
-	userGroupsPrefix   = "user:groups:"
+	userIDPrefix          = "user:id:"
+	userUsernamePrefix    = "user:username:"
+	userMailPrefix        = "user:mail:"
+	userNamePrefix        = "user:name:"
+	userGroupsPrefix      = "user:groups:"
+	userIAMUUIDPrefix     = "user:iamuuid:"   // opaqueID -> IAM account UUID
+	userOpaqueIDByIAMUUID = "user:byiamuuid:" // IAM account UUID -> opaqueID
 )
 
 // UserCache is a Redis-backed cache for CS3 user objects and their group
@@ -143,4 +145,43 @@ func (c *UserCache) GetGroups(ctx context.Context, opaqueID string) ([]string, e
 		return nil, err
 	}
 	return groups, nil
+}
+
+// StoreIAMUUID records the two-way mapping between a remapped OpaqueId and
+// the original IAM account UUID, so callers can resolve in either direction:
+//   - GetIAMUUID:   opaqueID -> iamUUID  (used by the user driver for
+//     group-membership lookups against the IAM API)
+//   - GetOpaqueIDByIAMUUID: iamUUID -> opaqueID  (used by the group driver
+//     to report the same OpaqueId for a member that GetUser/FindUsers
+//     would report)
+//
+// Only called for accounts that were actually remapped via primary_users;
+// the common case (OpaqueId == IAM UUID) needs no entry in either direction.
+func (c *UserCache) StoreIAMUUID(opaqueID, iamUUID string) error {
+	if err := store(c.pools, userIAMUUIDPrefix+strings.ToLower(opaqueID), iamUUID, c.userTTLSecs); err != nil {
+		return err
+	}
+	return store(c.pools, userOpaqueIDByIAMUUID+strings.ToLower(iamUUID), opaqueID, c.userTTLSecs)
+}
+
+// GetIAMUUID resolves the IAM account UUID for a given OpaqueId. If no
+// mapping is present, callers should fall back to treating opaqueID itself
+// as the IAM UUID.
+func (c *UserCache) GetIAMUUID(ctx context.Context, opaqueID string) (string, error) {
+	var uuid string
+	if err := fetch(ctx, c.pools, userIAMUUIDPrefix+strings.ToLower(opaqueID), &uuid); err != nil {
+		return "", err
+	}
+	return uuid, nil
+}
+
+// GetOpaqueIDByIAMUUID resolves the public OpaqueId for a given IAM account
+// UUID. If no mapping is present, callers should fall back to treating the
+// IAM UUID itself as the OpaqueId (the common, non-remapped case).
+func (c *UserCache) GetOpaqueIDByIAMUUID(ctx context.Context, iamUUID string) (string, error) {
+	var opaqueID string
+	if err := fetch(ctx, c.pools, userOpaqueIDByIAMUUID+strings.ToLower(iamUUID), &opaqueID); err != nil {
+		return "", err
+	}
+	return opaqueID, nil
 }
