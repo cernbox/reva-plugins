@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -276,7 +277,7 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 
 func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]*userpb.ExternalIdentity, error) {
 	log := appctx.GetLogger(ctx)
-	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=source", m.conf.APIBaseURL, email)
+	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=source", m.conf.APIBaseURL, neturl.PathEscape(email))
 	var r *IdentitiesResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
 		log.Error().Err(err).Msgf("error fetching external identities for %s", email)
@@ -437,7 +438,7 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 
 	for _, id := range uids {
 		// no pagination here because a user can be member of 1010 groups at most (Microsoft AD hardcoded limitation)
-		url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, id)
+		url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, neturl.PathEscape(id))
 		var r GroupsResponse
 		if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
 			return nil, err
