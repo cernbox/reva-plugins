@@ -156,8 +156,13 @@ func (a *APITokenManager) SendAPIGetRequest(ctx context.Context, url string, for
 	defer httpRes.Body.Close()
 
 	if httpRes.StatusCode == http.StatusUnauthorized {
-		// The token is no longer valid, try renewing it
-		return a.SendAPIGetRequest(ctx, url, true, v)
+		if !forceRenewal {
+			// The token is no longer valid, try renewing it
+			return a.SendAPIGetRequest(ctx, url, true, v)
+		} else {
+			// It was already renewed
+			return errors.New("rest: unauthorized despite renewed token")
+		}
 	}
 	if httpRes.StatusCode < 200 || httpRes.StatusCode > 299 {
 		return errors.New("rest: API request returned " + httpRes.Status)
