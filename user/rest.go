@@ -35,6 +35,7 @@ import (
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	revautils "github.com/cs3org/reva/v3/pkg/cbox/utils"
+	"github.com/cs3org/reva/v3/pkg/errtypes"
 	"github.com/cs3org/reva/v3/pkg/user"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/cs3org/reva/v3/pkg/utils/list"
@@ -244,6 +245,38 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 	return nil
 }
 
+func (m *manager) fetchExternalUserByEmail(ctx context.Context, email string) (*userpb.User, error) {
+	if email == "" || !strings.Contains(email, "@") {
+		return nil, errtypes.NotFound("rest: external user lookup requires an email address")
+	}
+
+	log := appctx.GetLogger(ctx)
+	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser", m.conf.APIBaseURL, neturl.PathEscape(email))
+
+	var r IdentitiesResponse
+	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
+		log.Error().Err(err).Str("email", email).Msg("rest: failed to fetch external user from authz")
+		return nil, err
+	}
+
+	for _, usr := range r.Data {
+		if usr == nil || !isExternalUserType(usr.UserType()) {
+			continue
+		}
+
+		u, err := m.parseAndCacheUser(ctx, usr)
+		if err != nil {
+			log.Error().Err(err).Str("email", email).Msg("rest: failed to parse external user fetched from authz")
+			continue
+		}
+
+		log.Debug().Str("email", email).Str("opaque_id", u.GetId().GetOpaqueId()).Msg("rest: fetched and cached external user from authz")
+		return u, nil
+	}
+
+	return nil, errtypes.NotFound("rest: external user not found in authz")
+}
+
 func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.User, error) {
 	log := appctx.GetLogger(ctx)
 
@@ -301,7 +334,14 @@ func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]
 func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingGroups bool) (*userpb.User, error) {
 	u, err := m.fetchCachedUserDetails(ctx, uid)
 	if err != nil {
-		return nil, err
+		if uid == nil || !isExternalUserType(uid.Type) || !strings.Contains(uid.OpaqueId, "@") {
+			return nil, err
+		}
+
+		u, err = m.fetchExternalUserByEmail(ctx, uid.OpaqueId)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if !skipFetchingGroups {
@@ -318,7 +358,17 @@ func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingG
 func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipFetchingGroups bool) (*userpb.User, error) {
 	u, err := m.fetchCachedUserByParam(ctx, claim, value)
 	if err != nil {
-		return nil, err
+		if _, ok := err.(errtypes.Conflict); ok {
+			return nil, err
+		}
+		if (claim != "username" && claim != "mail") || !strings.Contains(value, "@") {
+			return nil, err
+		}
+
+		u, err = m.fetchExternalUserByEmail(ctx, value)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if !skipFetchingGroups {
@@ -397,6 +447,10 @@ func isUserAnyType(user *userpb.User, types []userpb.UserType) bool {
 		}
 	}
 	return false
+}
+
+func isExternalUserType(t userpb.UserType) bool {
+	return t == userpb.UserType_USER_TYPE_LIGHTWEIGHT || t == userpb.UserType_USER_TYPE_FEDERATED
 }
 
 // Group contains the information about a group.
