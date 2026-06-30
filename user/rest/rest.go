@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cernbox/reva-plugins/cache"
 	redispools "github.com/cernbox/reva-plugins/redispools"
 	"github.com/cernbox/reva-plugins/utils"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
@@ -46,7 +47,7 @@ func init() {
 
 type manager struct {
 	conf            *config
-	redisPools      *redispools.RedisPools
+	cache           *cache.UserCache
 	apiTokenManager *revautils.APITokenManager
 }
 
@@ -145,7 +146,7 @@ func (m *manager) Configure(ml map[string]interface{}, ctx context.Context) erro
 		return err
 	}
 	m.conf = &c
-	m.redisPools = pools
+	m.cache = cache.NewUserCache(pools, c.UserFetchInterval, c.UserGroupsCacheExpiration)
 	m.apiTokenManager = apiTokenManager
 
 	// Since we're starting a subroutine which would take some time to execute,
@@ -272,7 +273,7 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 		u.Status = userpb.UserStatus_USER_STATUS_EXPIRING
 
 		// check if the user was active before: if so, notify the lifecycle manager that the user has left CERN
-		cachedUser, err := m.fetchCachedUserDetails(ctx, u.Id)
+		cachedUser, err := m.cache.GetByID(ctx, u.Id.OpaqueId)
 		if err != nil {
 			log.Error().Err(err).Str("user", u.Username).Msg("rest: error fetching cached user details to check if the user has left CERN")
 		} else {
@@ -285,7 +286,7 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 		}
 	}
 
-	if err := m.cacheUserDetails(u); err != nil {
+	if err := m.cache.StoreUser(u); err != nil {
 		log.Error().Err(err).Msg("rest: error caching user details")
 	}
 
@@ -321,7 +322,7 @@ func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User)
 }
 
 func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingGroups bool) (*userpb.User, error) {
-	u, err := m.fetchCachedUserDetails(ctx, uid)
+	u, err := m.cache.GetByID(ctx, uid.OpaqueId)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +339,13 @@ func (m *manager) GetUser(ctx context.Context, uid *userpb.UserId, skipFetchingG
 }
 
 func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipFetchingGroups bool) (*userpb.User, error) {
-	u, err := m.fetchCachedUserByParam(ctx, claim, value)
+	// We do not want to support linked external accounts.
+	// These can be identified by having username equal to a CERN email.
+	if claim == "username" && strings.HasSuffix(value, "@cern.ch") {
+		return nil, fmt.Errorf("rest: linked external accounts are not supported")
+	}
+
+	u, err := m.getCachedUserByClaim(ctx, claim, value)
 	if err != nil {
 		return nil, err
 	}
@@ -352,6 +359,18 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 	}
 
 	return u, nil
+}
+
+// getCachedUserByClaim dispatches to the right UserCache getter based on claim.
+func (m *manager) getCachedUserByClaim(ctx context.Context, claim, value string) (*userpb.User, error) {
+	switch claim {
+	case "username":
+		return m.cache.GetByUsername(ctx, value)
+	case "mail":
+		return m.cache.GetByMail(ctx, value)
+	default:
+		return m.cache.GetByID(ctx, value)
+	}
 }
 
 func (m *manager) FindUsers(ctx context.Context, query string, filters []*userpb.Filter, skipFetchingGroups bool) ([]*userpb.User, error) {
@@ -368,7 +387,7 @@ func (m *manager) FindUsers(ctx context.Context, query string, filters []*userpb
 		namespace, query = parts[0], parts[1]
 	}
 
-	users, err := m.findCachedUsers(ctx, query)
+	users, err := m.cache.Find(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +455,7 @@ type GroupsResponse struct {
 }
 
 func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]string, error) {
-	cachedGroups, err := m.fetchCachedUserGroups(ctx, uid)
+	cachedGroups, err := m.cache.GetGroups(ctx, uid.OpaqueId)
 	if err == nil {
 		return cachedGroups, nil
 	}
@@ -470,7 +489,7 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 		groups.Add(fetchedGroups...)
 	}
 
-	if err := m.cacheUserGroups(uid, groups.Values()); err != nil {
+	if err := m.cache.StoreGroups(uid, groups.Values()); err != nil {
 		log := appctx.GetLogger(ctx)
 		if m.conf.RedisSentinelMode {
 			log.Error().Str("sentinelAddress", m.conf.RedisSentinelAddress).Msg("rest: error caching user groups in Sentinel mode, check Sentinel connectivity and master discovery")
