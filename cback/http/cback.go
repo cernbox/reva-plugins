@@ -31,13 +31,12 @@ import (
 	"github.com/Masterminds/sprig"
 	cbackfs "github.com/cernbox/reva-plugins/cback/storage"
 	cback "github.com/cernbox/reva-plugins/cback/utils"
-	gateway "github.com/cs3org/go-cs3apis/cs3/gateway/v1beta1"
 	rpc "github.com/cs3org/go-cs3apis/cs3/rpc/v1beta1"
 	storage "github.com/cs3org/go-cs3apis/cs3/storage/provider/v1beta1"
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
-	"github.com/cs3org/reva/v3/pkg/rgrpc/todo/pool"
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
+	"github.com/cs3org/reva/v3/pkg/service"
 	"github.com/cs3org/reva/v3/pkg/sharedconf"
 	"github.com/go-chi/chi/v5"
 	"github.com/mitchellh/mapstructure"
@@ -64,7 +63,6 @@ type svc struct {
 	config     *config
 	router     *chi.Mux
 	client     *cback.Client
-	gw         gateway.GatewayAPIClient
 	tplStorage *template.Template
 	tplCback   *template.Template
 }
@@ -87,11 +85,6 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 
 	c.init()
 
-	gw, err := pool.GetGatewayServiceClient(pool.Endpoint(c.GatewaySvc))
-	if err != nil {
-		return nil, errors.Wrap(err, "cback: error getting gateway client")
-	}
-
 	tplStorage, err := template.New("tpl_storage").Funcs(sprig.TxtFuncMap()).Parse(c.TemplateToStorage)
 	if err != nil {
 		return nil, errors.Wrap(err, "cback: error creating template")
@@ -105,7 +98,6 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 	r := chi.NewRouter()
 	s := &svc{
 		config: c,
-		gw:     gw,
 		router: r,
 		client: cback.New(&cback.Config{
 			URL:     c.URL,
@@ -189,7 +181,13 @@ func (s *svc) createRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stat, err := s.gw.Stat(ctx, &storage.StatRequest{
+	gw, err := service.Gateway(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	stat, err := gw.Stat(ctx, &storage.StatRequest{
 		Ref: &storage.Reference{
 			Path: path,
 		},
