@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cernbox/reva-plugins/thumbnails/manager"
@@ -42,9 +43,9 @@ import (
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
 	"github.com/cs3org/reva/v3/pkg/httpclient"
-	"github.com/cs3org/reva/v3/pkg/rgrpc/todo/pool"
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
 	"github.com/cs3org/reva/v3/pkg/rhttp/router"
+	"github.com/cs3org/reva/v3/pkg/service"
 	"github.com/cs3org/reva/v3/pkg/sharedconf"
 	"github.com/cs3org/reva/v3/pkg/spaces"
 	"github.com/cs3org/reva/v3/pkg/storage/utils/downloader"
@@ -55,7 +56,7 @@ import (
 )
 
 func init() {
-	reva.RegisterPlugin(Thumbnails{})
+	reva.RegisterPlugin(&Thumbnails{})
 }
 
 const (
@@ -79,10 +80,13 @@ type config struct {
 // Thumbnails is an HTTP service that creates
 // thumbanails from images stored in reva.
 type Thumbnails struct {
-	c         *config
-	log       *zerolog.Logger
-	client    gateway.GatewayAPIClient
-	thumbnail *manager.Thumbnail
+	c          *config
+	log        *zerolog.Logger
+	httpClient *httpclient.Client
+
+	thumbnailOnce sync.Once
+	thumbnail     *manager.Thumbnail
+	thumbnailErr  error
 }
 
 func (c *config) ApplyDefaults() {
@@ -98,7 +102,7 @@ func (c *config) ApplyDefaults() {
 	c.GatewaySVC = sharedconf.GetGatewaySVC(c.GatewaySVC)
 }
 
-func (Thumbnails) RevaPlugin() reva.PluginInfo {
+func (*Thumbnails) RevaPlugin() reva.PluginInfo {
 	return reva.PluginInfo{
 		ID:  "http.services.thumbnails",
 		New: New,
@@ -112,37 +116,45 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		return nil, err
 	}
 
-	gtw, err := pool.GetGatewayServiceClient(pool.Endpoint(c.GatewaySVC))
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting gateway client")
-	}
-
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
 	client := httpclient.New(httpclient.RoundTripper(tr))
-	d := downloader.NewDownloader(gtw, client)
 
 	log := appctx.GetLogger(ctx)
-	mgr, err := manager.NewThumbnail(d, &manager.Config{
-		Quality:          c.Quality,
-		FixedResolutions: c.FixedResolutions,
-		Cache:            c.Cache,
-		CacheDrivers:     c.CacheDrivers,
-	}, log)
-	if err != nil {
-		return nil, err
-	}
 
 	s := &Thumbnails{
-		c:         &c,
-		log:       log,
-		thumbnail: mgr,
-		client:    gtw,
+		c:          &c,
+		log:        log,
+		httpClient: client,
 	}
 
 	return s, nil
+}
+
+// getThumbnail lazily builds the thumbnail manager on first use, resolving the
+// gateway from the process-wide registry. The gateway resolver is only
+// populated after all services are constructed, so it cannot be resolved in
+// New(); it must be resolved per-request.
+func (s *Thumbnails) getThumbnail(ctx context.Context) (*manager.Thumbnail, error) {
+	s.thumbnailOnce.Do(func() {
+		gtw, err := service.Gateway(ctx)
+		if err != nil {
+			s.thumbnailErr = errors.Wrap(err, "error getting gateway client")
+			return
+		}
+
+		d := downloader.NewDownloader(gtw, s.httpClient)
+
+		s.thumbnail, s.thumbnailErr = manager.NewThumbnail(d, &manager.Config{
+			Quality:          s.c.Quality,
+			FixedResolutions: s.c.FixedResolutions,
+			Cache:            s.c.Cache,
+			CacheDrivers:     s.c.CacheDrivers,
+		}, s.log)
+	})
+	return s.thumbnail, s.thumbnailErr
 }
 
 func (s *Thumbnails) Handler() http.Handler {
@@ -248,7 +260,13 @@ func (s *Thumbnails) davPublicContext(next http.Handler) http.Handler {
 			}
 		}
 
-		rsp, err := s.client.Authenticate(ctx, authReq)
+		gw, err := service.Gateway(ctx)
+		if err != nil {
+			s.writeHTTPError(w, err)
+			return
+		}
+
+		rsp, err := gw.Authenticate(ctx, authReq)
 		if err != nil {
 			s.writeHTTPError(w, err)
 			return
@@ -274,7 +292,12 @@ func (s *Thumbnails) davPublicContext(next http.Handler) http.Handler {
 }
 
 func (s *Thumbnails) statPublicFile(ctx context.Context, token, path string, sign bool, auth *share.PublicShareAuthentication) (*provider.ResourceInfo, error) {
-	resp, err := s.client.GetPublicShareByToken(ctx, &share.GetPublicShareByTokenRequest{
+	gw, err := service.Gateway(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := gw.GetPublicShareByToken(ctx, &share.GetPublicShareByTokenRequest{
 		Token:          token,
 		Sign:           sign,
 		Authentication: auth,
@@ -310,7 +333,12 @@ func (s *Thumbnails) statPublicFile(ctx context.Context, token, path string, sig
 }
 
 func (s *Thumbnails) statRes(ctx context.Context, ref *provider.Reference) (*provider.ResourceInfo, error) {
-	resp, err := s.client.Stat(ctx, &provider.StatRequest{
+	gw, err := service.Gateway(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := gw.Stat(ctx, &provider.StatRequest{
 		Ref: ref,
 	})
 	switch {
@@ -401,7 +429,13 @@ func (s *Thumbnails) Thumbnail(w http.ResponseWriter, r *http.Request) http.Hand
 			return
 		}
 
-		data, mimetype, err := s.thumbnail.GetThumbnail(r.Context(), thumbReq.File, thumbReq.ETag, thumbReq.Width, thumbReq.Height, thumbReq.OutputType)
+		thumbnail, err := s.getThumbnail(r.Context())
+		if err != nil {
+			s.writeHTTPError(w, err)
+			return
+		}
+
+		data, mimetype, err := thumbnail.GetThumbnail(r.Context(), thumbReq.File, thumbReq.ETag, thumbReq.Width, thumbReq.Height, thumbReq.OutputType)
 
 		if err != nil {
 			s.writeHTTPError(w, err)
