@@ -55,6 +55,7 @@ type config struct {
 	ClientSecret      string `mapstructure:"client_secret"`
 	Timeout           int64  `mapstructure:"timeout"`
 	Insecure          bool   `mapstructure:"insecure"`
+	Scope             string `mapstructure:"scope"`
 }
 
 // InitAPITokenManager initializes a new APITokenManager.
@@ -98,6 +99,7 @@ func (a *APITokenManager) getAPIToken(ctx context.Context) (string, time.Time, e
 	params := url.Values{
 		"grant_type": {"client_credentials"},
 		"audience":   {a.conf.TargetAPI},
+		"scope":      {a.conf.Scope},
 	}
 
 	httpReq, err := http.NewRequest(http.MethodPost, a.conf.OIDCTokenEndpoint, strings.NewReader(params.Encode()))
