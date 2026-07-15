@@ -83,8 +83,12 @@ func (c *GroupCache) GetByName(ctx context.Context, name string) (*grouppb.Group
     if len(values) == 0 {
         return nil, errtypes.NotFound(name)
     }
-    // values[0] is the bare UUID stored by StoreGroup.
-    return c.GetByID(ctx, values[0])
+    // values[0] is the bare UUID stored by StoreGroup, JSON-encoded (quoted).
+    var uuid string
+    if err := json.Unmarshal([]byte(values[0]), &uuid); err != nil {
+        return nil, errtypes.NotFound(name)
+    }
+    return c.GetByID(ctx, uuid)
 }
 
 // Find scans all group index keys matching query and returns the deduplicated
@@ -108,8 +112,13 @@ func (c *GroupCache) Find(ctx context.Context, query string) ([]*grouppb.Group, 
             seen[g.Id.OpaqueId] = &g
             continue
         }
-        // Otherwise it's a bare UUID from the name index — dereference it.
-        if full, err := c.GetByID(ctx, s); err == nil {
+        // Otherwise it's a bare UUID from the name index (JSON-encoded,
+        // i.e. quoted) — decode and dereference it.
+        var uuid string
+        if err := json.Unmarshal([]byte(s), &uuid); err != nil {
+            continue
+        }
+        if full, err := c.GetByID(ctx, uuid); err == nil {
             seen[full.Id.OpaqueId] = full
         }
     }

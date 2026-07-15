@@ -23,10 +23,7 @@ package indigoiam
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,6 +32,7 @@ import (
 
 	"github.com/cernbox/reva-plugins/cache"
 	redispools "github.com/cernbox/reva-plugins/redispools"
+	"github.com/cernbox/reva-plugins/utils"
 	grouppb "github.com/cs3org/go-cs3apis/cs3/identity/group/v1beta1"
 	userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
 	"github.com/cs3org/reva/v3"
@@ -48,10 +46,10 @@ func init() {
 }
 
 type manager struct {
-	conf       *config
-	cache      *cache.GroupCache
-	userCache  *cache.UserCache // read-only access, for IAM-UUID -> OpaqueId resolution
-	httpClient *http.Client
+	conf         *config
+	cache        *cache.GroupCache
+	userCache    *cache.UserCache // read-only access, for IAM-UUID -> OpaqueId resolution
+	tokenManager *utils.APITokenManager
 }
 
 func (manager) RevaPlugin() reva.PluginInfo {
@@ -69,11 +67,18 @@ type config struct {
 	RedisMasterName      string `mapstructure:"redis_master_name"      docs:""`
 	RedisSentinelMode    bool   `mapstructure:"redis_sentinel_mode"    docs:"false"`
 
-	IAMBaseURL         string `mapstructure:"iam_base_url"         docs:"https://iam.example.org"`
-	AdminToken         string `mapstructure:"admin_token"          docs:"-"`
-	IDProvider         string `mapstructure:"id_provider"          docs:"https://iam.example.org"`
-	HTTPTimeoutSeconds int    `mapstructure:"http_timeout_seconds" docs:"30"`
-	Insecure           bool   `mapstructure:"insecure"             docs:"false"`
+	IAMBaseURL string `mapstructure:"iam_base_url" docs:"https://iam.example.org"`
+	IDProvider string `mapstructure:"id_provider" docs:"https://iam.example.org"`
+
+	// Client credentials for the OIDC client_credentials exchange that yields
+	// the admin token used to call the IAM REST API. These are consumed by the
+	// shared token manager (utils.InitAPITokenManager), which handles token
+	// retrieval, caching and renewal.
+	ClientID          string `mapstructure:"client_id"           docs:"-"`
+	ClientSecret      string `mapstructure:"client_secret"       docs:"-"`
+	OIDCTokenEndpoint string `mapstructure:"oidc_token_endpoint" docs:"https://iam.example.org/token"`
+	TargetAPI         string `mapstructure:"target_api"          docs:"scim"`
+	Scope             string `mapstructure:"scope"               docs:"iam:admin.read"`
 
 	GroupFetchInterval          int `mapstructure:"group_fetch_interval"           docs:"3600"`
 	GroupMembersCacheExpiration int `mapstructure:"group_members_cache_expiration" docs:"5"`
@@ -92,9 +97,6 @@ func (c *config) ApplyDefaults() {
 	}
 	if c.IDProvider == "" {
 		c.IDProvider = c.IAMBaseURL
-	}
-	if c.HTTPTimeoutSeconds == 0 {
-		c.HTTPTimeoutSeconds = 30
 	}
 	if c.GroupFetchInterval == 0 {
 		c.GroupFetchInterval = 3600
@@ -170,9 +172,9 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 		pools = &redispools.RedisPools{}
 	}
 
-	tr := http.DefaultTransport
-	if c.Insecure {
-		tr = &http.Transport{}
+	tokenManager, err := utils.InitAPITokenManager(m)
+	if err != nil {
+		return nil, err
 	}
 
 	mgr := &manager{
@@ -184,11 +186,8 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 		// arguments only affect StoreUser/StoreGroups, which this driver
 		// never calls, so any values are safe; we reuse the group driver's
 		// own fetch interval for consistency.
-		userCache: cache.NewUserCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
-		httpClient: &http.Client{
-			Transport: tr,
-			Timeout:   time.Duration(c.HTTPTimeoutSeconds) * time.Second,
-		},
+		userCache:    cache.NewUserCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
+		tokenManager: tokenManager,
 	}
 
 	go mgr.fetchAllGroups(context.Background())
@@ -232,7 +231,7 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 		)
 
 		var list iamGroupList
-		if err := m.iamGET(ctx, url, &list); err != nil {
+		if err := m.tokenManager.SendAPIGetRequest(ctx, url, false, &list); err != nil {
 			return err
 		}
 
@@ -244,7 +243,7 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 		}
 
 		nextStart := startIndex + list.ItemsPerPage
-		if nextStart > list.TotalResults {
+		if list.ItemsPerPage == 0 || nextStart > list.TotalResults {
 			break
 		}
 		startIndex = nextStart
@@ -332,7 +331,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		)
 
 		var list iamAccountList
-		if err := m.iamGET(ctx, url, &list); err != nil {
+		if err := m.tokenManager.SendAPIGetRequest(ctx, url, false, &list); err != nil {
 			return nil, err
 		}
 
@@ -357,7 +356,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		}
 
 		nextStart := startIndex + list.ItemsPerPage
-		if nextStart > list.TotalResults {
+		if list.ItemsPerPage == 0 || nextStart > list.TotalResults {
 			break
 		}
 		startIndex = nextStart
@@ -382,28 +381,3 @@ func (m *manager) HasMember(ctx context.Context, gid *grouppb.GroupId, uid *user
 	return false, nil
 }
 
-// ---------------------------------------------------------------------------
-// IAM HTTP helper
-// ---------------------------------------------------------------------------
-
-func (m *manager) iamGET(ctx context.Context, url string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+m.conf.AdminToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := m.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("indigoiam: GET %s returned %s: %s", url, resp.Status, string(body))
-	}
-
-	return json.NewDecoder(resp.Body).Decode(v)
-}
