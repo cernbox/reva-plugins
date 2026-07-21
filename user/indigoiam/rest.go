@@ -283,6 +283,12 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 			// Only the exceptional, remapped case needs a reverse-index
 			// entry; lightweight users already have OpaqueId == IAM UUID.
 			if remapped {
+				// The account id is no longer this user's OpaqueId (it is now the
+				// mapped username). Evict any lightweight record cached under the
+				// account id by an earlier sync, so it can't shadow the promotion.
+				if err := m.cache.DeleteByID(acc.ID); err != nil {
+					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record")
+				}
 				if err := m.cache.StoreIAMUUID(u.Id.OpaqueId, acc.ID); err != nil {
 					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to cache IAM UUID mapping")
 				}
@@ -360,14 +366,19 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 			// Indigo IAM access tokens carry only `sub` (the account UUID), and
 			// reva's oidc auth manager always resolves logins via
 			// GetUserByClaim(claim="username", value=<sub>). Since users are
-			// indexed by their SCIM userName (a different UUID), fall back to
-			// treating `value` as an account id so authentication by sub works.
-			if u, err = m.cache.GetByID(ctx, value); err != nil {
-				// Primary users have OpaqueId != account id; resolve the account
-				// id back to the remapped OpaqueId via the reverse index.
-				if opaque, e := m.cache.GetOpaqueIDByIAMUUID(ctx, value); e == nil {
-					u, err = m.cache.GetByID(ctx, opaque)
-				}
+			// indexed by their SCIM userName (a different UUID), `value` has to be
+			// treated as an account id so authentication by sub works.
+			//
+			// Consult the reverse index first: primary users have OpaqueId !=
+			// account id, so their record lives under the remapped OpaqueId. Doing
+			// this before GetByID(value) is what makes the remap authoritative —
+			// otherwise a lightweight record cached under the account id in an
+			// earlier sync (before the user was promoted) would shadow it.
+			if opaque, e := m.cache.GetOpaqueIDByIAMUUID(ctx, value); e == nil {
+				u, err = m.cache.GetByID(ctx, opaque)
+			} else {
+				// No remap entry: the account id is the OpaqueId (lightweight case).
+				u, err = m.cache.GetByID(ctx, value)
 			}
 		}
 	case "mail":

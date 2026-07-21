@@ -61,6 +61,20 @@ func (p *RedisPools) SetVal(key, val string, expiration int) error {
 	return errors.New("redispools: unable to get connection from redis pool")
 }
 
+// DelVal deletes a key from the redis pool. Deleting a missing key is not an
+// error. Writes go to the master, like SetVal.
+func (p *RedisPools) DelVal(key string) error {
+	conn := p.Write.Get()
+	defer conn.Close()
+	if conn != nil {
+		if _, err := conn.Do("DEL", key); err != nil {
+			return err
+		}
+		return nil
+	}
+	return errors.New("redispools: unable to get connection from redis pool")
+}
+
 // DoWithReadFallback runs fn on a connection from the read pool, falling back
 // to the write pool if the read pool is unavailable or fn returns an error.
 // redis.ErrNil is treated as a successful "not found" result and does not

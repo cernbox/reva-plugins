@@ -8,12 +8,12 @@ require (
 	github.com/cs3org/go-cs3apis v0.0.0-20260615152846-548de2b9f6db
 	github.com/cs3org/reva/v3 v3.8.0
 	github.com/disintegration/imaging v1.6.2
-	github.com/go-chi/chi/v5 v5.3.0
+	github.com/go-chi/chi/v5 v5.3.1
 	github.com/gomodule/redigo v1.9.3
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.35.1
-	google.golang.org/grpc v1.81.1
+	google.golang.org/grpc v1.82.1
 )
 
 require (
@@ -29,8 +29,8 @@ require (
 	github.com/creasty/defaults v1.8.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/glpatcern/go-mime v0.0.0-20221026162842-2a8d71ad17a9 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
-	github.com/go-ldap/ldap/v3 v3.4.13 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
+	github.com/go-ldap/ldap/v3 v3.4.14 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -65,16 +65,16 @@ require (
 	go.opentelemetry.io/otel/sdk v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
-	go.step.sm/crypto v0.84.1 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
+	go.step.sm/crypto v0.85.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/image v0.13.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 

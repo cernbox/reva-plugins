@@ -76,6 +76,14 @@ func (c *UserCache) StoreUser(u *userpb.User) error {
 	return nil
 }
 
+// DeleteByID removes the user record stored under the given OpaqueId. Removing
+// an absent key is not an error. Used to evict a stale lightweight record after
+// an account has been remapped to a primary user under a different OpaqueId, so
+// the old record can no longer shadow the remap.
+func (c *UserCache) DeleteByID(opaqueID string) error {
+	return c.pools.DelVal(userIDPrefix + strings.ToLower(opaqueID))
+}
+
 // GetByID looks up a user by their OpaqueId.
 func (c *UserCache) GetByID(ctx context.Context, opaqueID string) (*userpb.User, error) {
 	var u userpb.User
