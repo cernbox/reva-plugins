@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	redispools "github.com/cernbox/reva-plugins/redispools"
@@ -17,6 +18,7 @@ import (
 //   user:username:<login>                       → JSON userpb.User
 //   user:mail:<email>                           → JSON userpb.User
 //   user:name:<opaqueID>_<display_lower_snake>  → JSON userpb.User
+//   user:uid:<uid_number>                       → JSON userpb.User
 //   user:groups:<opaqueID>                      → JSON []string
 
 const (
@@ -24,6 +26,7 @@ const (
 	userUsernamePrefix    = "user:username:"
 	userMailPrefix        = "user:mail:"
 	userNamePrefix        = "user:name:"
+	userUIDPrefix         = "user:uid:"
 	userGroupsPrefix      = "user:groups:"
 	userIAMUUIDPrefix     = "user:iamuuid:"   // opaqueID -> IAM account UUID
 	userOpaqueIDByIAMUUID = "user:byiamuuid:" // IAM account UUID -> opaqueID
@@ -73,6 +76,15 @@ func (c *UserCache) StoreUser(u *userpb.User) error {
 			return err
 		}
 	}
+	// EOS-backed storage resolves file ownership by integer uid via
+	// GetUserByClaim(claim="uid"), so a uid index is required for owner and
+	// permission resolution (and hence sharing) to work. uid 0 is root and is
+	// never a real user, so it is not indexed.
+	if u.UidNumber != 0 {
+		if err := store(c.pools, userUIDPrefix+strconv.FormatInt(u.UidNumber, 10), u, c.userTTLSecs); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -107,6 +119,16 @@ func (c *UserCache) GetByMail(ctx context.Context, mail string) (*userpb.User, e
 	var u userpb.User
 	if err := fetch(ctx, c.pools, userMailPrefix+strings.ToLower(mail), &u); err != nil {
 		return nil, errtypes.NotFound(mail)
+	}
+	return &u, nil
+}
+
+// GetByUID looks up a user by their numeric uid (as a decimal string). Used to
+// resolve EOS file ownership back to a CS3 user.
+func (c *UserCache) GetByUID(ctx context.Context, uid string) (*userpb.User, error) {
+	var u userpb.User
+	if err := fetch(ctx, c.pools, userUIDPrefix+uid, &u); err != nil {
+		return nil, errtypes.NotFound(uid)
 	}
 	return &u, nil
 }

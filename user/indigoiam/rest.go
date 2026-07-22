@@ -394,6 +394,10 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 		}
 	case "mail":
 		u, err = m.cache.GetByMail(ctx, value)
+	case "uid":
+		// EOS resolves file ownership by integer uid; only primary users have a
+		// non-zero uid, lightweight accounts are never indexed here.
+		u, err = m.cache.GetByUID(ctx, value)
 	default:
 		u, err = m.cache.GetByID(ctx, value)
 	}
@@ -493,4 +497,3 @@ func (m *manager) IsInGroup(ctx context.Context, uid *userpb.UserId, group strin
 	}
 	return false, nil
 }
-

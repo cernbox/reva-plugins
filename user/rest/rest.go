@@ -418,6 +418,8 @@ func (m *manager) getCachedUserByClaim(ctx context.Context, claim, value string)
 		return m.cache.GetByUsername(ctx, value)
 	case "mail":
 		return m.cache.GetByMail(ctx, value)
+	case "uid", "uid_number":
+		return m.cache.GetByUID(ctx, value)
 	default:
 		return m.cache.GetByID(ctx, value)
 	}
