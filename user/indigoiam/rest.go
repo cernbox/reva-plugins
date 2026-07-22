@@ -310,6 +310,9 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 // LIGHTWEIGHT and keeps its original IAM UUID as OpaqueId.
 func (m *manager) accountToProto(acc *iamAccount) (*userpb.User, bool) {
 	opaqueID := acc.ID
+	// Default the login name to the IAM userName (a UUID for federated
+	// accounts); primary users override it with their real CERN login below.
+	username := acc.UserName
 	userType := userpb.UserType_USER_TYPE_LIGHTWEIGHT
 	uid := int64(0)
 	gid := int64(0)
@@ -317,10 +320,18 @@ func (m *manager) accountToProto(acc *iamAccount) (*userpb.User, bool) {
 
 	if mapped, ok := m.conf.PrimaryUsers[acc.ID]; ok {
 		opaqueID = mapped.Username
+		username = mapped.Username
 		uid = mapped.UIDNumber
 		gid = mapped.GIDNumber
 		userType = userpb.UserType_USER_TYPE_PRIMARY
 		remapped = true
+	}
+
+	// IAM sets displayName to the account UUID for federated accounts, so
+	// prefer the human-readable formatted name when it is available.
+	displayName := acc.DisplayName
+	if acc.Name.Formatted != "" {
+		displayName = acc.Name.Formatted
 	}
 
 	return &userpb.User{
@@ -329,9 +340,9 @@ func (m *manager) accountToProto(acc *iamAccount) (*userpb.User, bool) {
 			Idp:      m.conf.IDProvider,
 			Type:     userType,
 		},
-		Username:    acc.UserName,
+		Username:    username,
 		Mail:        acc.primaryEmail(),
-		DisplayName: acc.DisplayName,
+		DisplayName: displayName,
 		UidNumber:   uid,
 		GidNumber:   gid,
 	}, remapped
