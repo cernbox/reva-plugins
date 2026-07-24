@@ -236,9 +236,20 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 		}
 
 		for i := range list.Resources {
+			// A group is identified by its name, so one without a display
+			// name cannot be cached or resolved.
+			if list.Resources[i].DisplayName == "" {
+				log.Warn().Str("uuid", list.Resources[i].ID).Msg("indigoiam group: skipping group without a display name")
+				continue
+			}
 			g := m.iamGroupToProto(&list.Resources[i])
 			if err := m.cache.StoreGroup(g); err != nil {
 				log.Error().Err(err).Str("uuid", list.Resources[i].ID).Msg("indigoiam group: cache error")
+			}
+			// Groups are keyed by name, so the IAM UUID needs its own index
+			// to stay resolvable for the member endpoints.
+			if err := m.cache.StoreIAMUUID(g.Id.OpaqueId, list.Resources[i].ID); err != nil {
+				log.Error().Err(err).Str("uuid", list.Resources[i].ID).Msg("indigoiam group: failed to cache IAM UUID mapping")
 			}
 		}
 
@@ -251,10 +262,18 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 	return nil
 }
 
+// iamGroupToProto converts an iamGroup to the CS3 grouppb.Group type.
+//
+// A group's identity is its readable name, not the IAM UUID: everything
+// downstream (project membership, share grants) compares groups against the
+// names carried in userpb.User.Groups, which the user driver fills from the
+// IAM group `name` field. Keying groups by UUID here would make those
+// comparisons never match. The UUID is kept in the cache's group:iamuuid:
+// index instead, for the UUID-addressed IAM endpoints (see GetMembers).
 func (m *manager) iamGroupToProto(g *iamGroup) *grouppb.Group {
 	return &grouppb.Group{
 		Id: &grouppb.GroupId{
-			OpaqueId: g.ID,
+			OpaqueId: strings.ToLower(g.DisplayName),
 			Idp:      m.conf.IDProvider,
 		},
 		GroupName:   g.DisplayName,
@@ -321,13 +340,20 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		return cached, nil
 	}
 
+	// Groups are identified by name, but this IAM endpoint is addressed by
+	// UUID. If no mapping is cached, assume the caller already passed a UUID.
+	iamUUID, err := m.cache.GetIAMUUID(ctx, gid.OpaqueId)
+	if err != nil {
+		iamUUID = gid.OpaqueId
+	}
+
 	startIndex := 1
 	var members []*userpb.UserId
 
 	for {
 		url := fmt.Sprintf(
 			"%s/iam/account/find/bygroup/%s?startIndex=%d&count=%d",
-			m.conf.IAMBaseURL, gid.OpaqueId, startIndex, m.conf.PageSize,
+			m.conf.IAMBaseURL, iamUUID, startIndex, m.conf.PageSize,
 		)
 
 		var list iamAccountList

@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -469,7 +470,10 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 		}
 
 		for _, g := range list.Resources {
-			groups = append(groups, g.Name)
+			// Lower-cased to match the group driver's opaque id and the
+			// group names the CERN driver reports, so the exact-match
+			// membership checks downstream cannot be defeated by casing.
+			groups = append(groups, strings.ToLower(g.Name))
 		}
 
 		nextStart := startIndex + list.ItemsPerPage
