@@ -284,11 +284,20 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 			// Only the exceptional, remapped case needs a reverse-index
 			// entry; lightweight users already have OpaqueId == IAM UUID.
 			if remapped {
-				// The account id is no longer this user's OpaqueId (it is now the
-				// mapped username). Evict any lightweight record cached under the
-				// account id by an earlier sync, so it can't shadow the promotion.
+				// The account id is no longer this user's OpaqueId or Username (both
+				// are now the mapped login). Evict every key an earlier sync could
+				// have cached a lightweight record under, so it can't shadow the
+				// promotion: the id and username indexes are both keyed by the
+				// account id, and acc.UserName covers records written before
+				// Username was aligned with OpaqueId.
 				if err := m.cache.DeleteByID(acc.ID); err != nil {
 					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record")
+				}
+				if err := m.cache.DeleteByUsername(acc.ID); err != nil {
+					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record by username")
+				}
+				if err := m.cache.DeleteByUsername(acc.UserName); err != nil {
+					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record by IAM userName")
 				}
 				if err := m.cache.StoreIAMUUID(u.Id.OpaqueId, acc.ID); err != nil {
 					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to cache IAM UUID mapping")
@@ -311,9 +320,13 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 // LIGHTWEIGHT and keeps its original IAM UUID as OpaqueId.
 func (m *manager) accountToProto(acc *iamAccount) (*userpb.User, bool) {
 	opaqueID := acc.ID
-	// Default the login name to the IAM userName (a UUID for federated
-	// accounts); primary users override it with their real CERN login below.
-	username := acc.UserName
+	// Keep Username == OpaqueId, the invariant the rest of CERNBox relies on
+	// (cf. user/rest/rest.go, which sets Username = FormatUserID(u.Id)): reva
+	// compares request identifiers against, and reports to clients, either one
+	// interchangeably. The IAM userName is an unrelated UUID for federated
+	// accounts, so nothing human-readable is lost here. Primary users override
+	// both with their real CERN login below.
+	username := acc.ID
 	userType := userpb.UserType_USER_TYPE_LIGHTWEIGHT
 	uid := int64(0)
 	gid := int64(0)
@@ -377,15 +390,19 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 		if err != nil {
 			// Indigo IAM access tokens carry only `sub` (the account UUID), and
 			// reva's oidc auth manager always resolves logins via
-			// GetUserByClaim(claim="username", value=<sub>). Since users are
-			// indexed by their SCIM userName (a different UUID), `value` has to be
-			// treated as an account id so authentication by sub works.
+			// GetUserByClaim(claim="username", value=<sub>). Lightweight users are
+			// indexed under the account UUID, so the lookup above already resolved
+			// them; getting here means `value` is not a known username, so it has
+			// to be treated as an account id — the case of a primary user, whose
+			// Username is their mapped CERN login rather than the UUID in `sub`.
 			//
 			// Consult the reverse index first: primary users have OpaqueId !=
 			// account id, so their record lives under the remapped OpaqueId. Doing
 			// this before GetByID(value) is what makes the remap authoritative —
 			// otherwise a lightweight record cached under the account id in an
-			// earlier sync (before the user was promoted) would shadow it.
+			// earlier sync (before the user was promoted) would shadow it. Note
+			// that the username index is evicted on remap for the same reason (see
+			// fetchAllUserAccounts), since it is consulted before this fallback.
 			if opaque, e := m.cache.GetOpaqueIDByIAMUUID(ctx, value); e == nil {
 				u, err = m.cache.GetByID(ctx, opaque)
 			} else {

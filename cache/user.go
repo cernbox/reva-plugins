@@ -96,6 +96,16 @@ func (c *UserCache) DeleteByID(opaqueID string) error {
 	return c.pools.DelVal(userIDPrefix + strings.ToLower(opaqueID))
 }
 
+// DeleteByUsername removes the user record stored under the given username.
+// Removing an absent key is not an error. Needed alongside DeleteByID when
+// evicting a remapped account: since lightweight users have Username ==
+// OpaqueId == IAM account UUID, and logins resolve through
+// GetUserByClaim(claim="username", value=<account UUID>), a leftover username
+// entry would be found before the remap indexes are ever consulted.
+func (c *UserCache) DeleteByUsername(username string) error {
+	return c.pools.DelVal(userUsernamePrefix + strings.ToLower(username))
+}
+
 // GetByID looks up a user by their OpaqueId.
 func (c *UserCache) GetByID(ctx context.Context, opaqueID string) (*userpb.User, error) {
 	var u userpb.User
