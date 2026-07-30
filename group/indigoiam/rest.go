@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -70,9 +71,8 @@ type config struct {
 	IAMBaseURL string `mapstructure:"iam_base_url" docs:"https://iam.example.org"`
 	IDProvider string `mapstructure:"id_provider" docs:"https://iam.example.org"`
 
-	// Client credentials for the OIDC client_credentials exchange that yields
-	// the admin token used to call the IAM REST API. These are consumed by the
-	// shared token manager (utils.InitAPITokenManager), which handles token
+	// Credentials for the client_credentials exchange yielding the admin token
+	// for the IAM REST API. Consumed by utils.InitAPITokenManager, which handles
 	// retrieval, caching and renewal.
 	ClientID          string `mapstructure:"client_id"           docs:"-"`
 	ClientSecret      string `mapstructure:"client_secret"       docs:"-"`
@@ -113,8 +113,8 @@ func (c *config) ApplyDefaults() {
 // Indigo IAM JSON shapes
 // ---------------------------------------------------------------------------
 
-// iamGroup is the shape of a single resource in /iam/group/search.
-type iamGroup struct {
+// IndigoIAMGroup is the shape of a single resource in /iam/group/search.
+type IndigoIAMGroup struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
 	IndigoGroup struct {
@@ -126,27 +126,27 @@ type iamGroup struct {
 	} `json:"urn:indigo-dc:scim:schemas:IndigoGroup"`
 }
 
-// iamGroupList is the paginated list returned by /iam/group/search.
-type iamGroupList struct {
-	TotalResults int        `json:"totalResults"`
-	ItemsPerPage int        `json:"itemsPerPage"`
-	StartIndex   int        `json:"startIndex"`
-	Resources    []iamGroup `json:"Resources"`
+// IndigoIAMGroupList is the paginated list returned by /iam/group/search.
+type IndigoIAMGroupList struct {
+	TotalResults int              `json:"totalResults"`
+	ItemsPerPage int              `json:"itemsPerPage"`
+	StartIndex   int              `json:"startIndex"`
+	Resources    []IndigoIAMGroup `json:"Resources"`
 }
 
-// iamAccount is the shape of a user returned by /iam/account/find/bygroup/{id}.
-type iamAccount struct {
+// IndigoIAMAccount is the shape of a user returned by /iam/account/find/bygroup/{id}.
+type IndigoIAMAccount struct {
 	ID       string `json:"id"`
 	UserName string `json:"userName"`
 	Active   bool   `json:"active"`
 }
 
-// iamAccountList is the paginated list returned by the bygroup filter endpoint.
-type iamAccountList struct {
-	TotalResults int          `json:"totalResults"`
-	ItemsPerPage int          `json:"itemsPerPage"`
-	StartIndex   int          `json:"startIndex"`
-	Resources    []iamAccount `json:"Resources"`
+// IndigoIAMAccountList is the paginated list returned by the bygroup filter endpoint.
+type IndigoIAMAccountList struct {
+	TotalResults int                `json:"totalResults"`
+	ItemsPerPage int                `json:"itemsPerPage"`
+	StartIndex   int                `json:"startIndex"`
+	Resources    []IndigoIAMAccount `json:"Resources"`
 }
 
 // ---------------------------------------------------------------------------
@@ -180,12 +180,8 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 	mgr := &manager{
 		conf:  &c,
 		cache: cache.NewGroupCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
-		// UserGroupsCacheExpiration doesn't apply here since this UserCache
-		// instance is only ever used for GetIAMUUID/GetOpaqueIDByIAMUUID
-		// lookups, not for storing users or groups membership. The TTL
-		// arguments only affect StoreUser/StoreGroups, which this driver
-		// never calls, so any values are safe; we reuse the group driver's
-		// own fetch interval for consistency.
+		// TTLs are irrelevant here: this instance only reads the IAM-UUID
+		// indexes, and TTLs only affect the Store* calls this driver never makes.
 		userCache:    cache.NewUserCache(pools, c.GroupFetchInterval, c.GroupMembersCacheExpiration),
 		tokenManager: tokenManager,
 	}
@@ -230,14 +226,13 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 			m.conf.IAMBaseURL, startIndex, m.conf.PageSize,
 		)
 
-		var list iamGroupList
+		var list IndigoIAMGroupList
 		if err := m.tokenManager.SendAPIGetRequest(ctx, url, false, &list); err != nil {
 			return err
 		}
 
 		for i := range list.Resources {
-			// A group is identified by its name, so one without a display
-			// name cannot be cached or resolved.
+			// A group without a display name has no identity to be keyed by.
 			if list.Resources[i].DisplayName == "" {
 				log.Warn().Str("uuid", list.Resources[i].ID).Msg("indigoiam group: skipping group without a display name")
 				continue
@@ -246,8 +241,7 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 			if err := m.cache.StoreGroup(g); err != nil {
 				log.Error().Err(err).Str("uuid", list.Resources[i].ID).Msg("indigoiam group: cache error")
 			}
-			// Groups are keyed by name, so the IAM UUID needs its own index
-			// to stay resolvable for the member endpoints.
+			// See iamGroupToProto for why the UUID needs its own index.
 			if err := m.cache.StoreIAMUUID(g.Id.OpaqueId, list.Resources[i].ID); err != nil {
 				log.Error().Err(err).Str("uuid", list.Resources[i].ID).Msg("indigoiam group: failed to cache IAM UUID mapping")
 			}
@@ -262,15 +256,12 @@ func (m *manager) fetchAllGroupAccounts(ctx context.Context) error {
 	return nil
 }
 
-// iamGroupToProto converts an iamGroup to the CS3 grouppb.Group type.
-//
-// A group's identity is its readable name, not the IAM UUID: everything
-// downstream (project membership, share grants) compares groups against the
-// names carried in userpb.User.Groups, which the user driver fills from the
-// IAM group `name` field. Keying groups by UUID here would make those
-// comparisons never match. The UUID is kept in the cache's group:iamuuid:
-// index instead, for the UUID-addressed IAM endpoints (see GetMembers).
-func (m *manager) iamGroupToProto(g *iamGroup) *grouppb.Group {
+// iamGroupToProto converts an IndigoIAMGroup to the CS3 grouppb.Group type. A group's
+// identity is its lower-cased name, as in group/rest/rest.go: share grants match
+// it against userpb.User.Groups, so keying by UUID would never hit. The UUID
+// goes to group:iamuuid: instead. Assumes displayName here equals the `name` the
+// user driver reads from /iam/account/{id}/groups; IAM does not guarantee that.
+func (m *manager) iamGroupToProto(g *IndigoIAMGroup) *grouppb.Group {
 	return &grouppb.Group{
 		Id: &grouppb.GroupId{
 			OpaqueId: strings.ToLower(g.DisplayName),
@@ -340,8 +331,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 		return cached, nil
 	}
 
-	// Groups are identified by name, but this IAM endpoint is addressed by
-	// UUID. If no mapping is cached, assume the caller already passed a UUID.
+	// This endpoint is UUID-addressed; on a miss assume gid already is one.
 	iamUUID, err := m.cache.GetIAMUUID(ctx, gid.OpaqueId)
 	if err != nil {
 		iamUUID = gid.OpaqueId
@@ -356,7 +346,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 			m.conf.IAMBaseURL, iamUUID, startIndex, m.conf.PageSize,
 		)
 
-		var list iamAccountList
+		var list IndigoIAMAccountList
 		if err := m.tokenManager.SendAPIGetRequest(ctx, url, false, &list); err != nil {
 			return nil, err
 		}
@@ -399,11 +389,7 @@ func (m *manager) HasMember(ctx context.Context, gid *grouppb.GroupId, uid *user
 	if err != nil {
 		return false, err
 	}
-	for _, u := range members {
-		if u.OpaqueId == uid.OpaqueId {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.ContainsFunc(members, func(u *userpb.UserId) bool {
+		return u.OpaqueId == uid.OpaqueId
+	}), nil
 }
-

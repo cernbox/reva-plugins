@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -74,9 +75,8 @@ type config struct {
 	IAMBaseURL string `mapstructure:"iam_base_url" docs:"https://iam.example.org"`
 	IDProvider string `mapstructure:"id_provider" docs:"https://iam.example.org"`
 
-	// Client credentials for the OIDC client_credentials exchange that yields
-	// the admin token used to call the IAM REST API. These are consumed by the
-	// shared token manager (utils.InitAPITokenManager), which handles token
+	// Credentials for the client_credentials exchange yielding the admin token
+	// for the IAM REST API. Consumed by utils.InitAPITokenManager, which handles
 	// retrieval, caching and renewal.
 	ClientID          string `mapstructure:"client_id"           docs:"-"`
 	ClientSecret      string `mapstructure:"client_secret"       docs:"-"`
@@ -88,12 +88,9 @@ type config struct {
 	UserGroupsCacheExpiration int `mapstructure:"user_groups_cache_expiration" docs:"5"`
 	PageSize                  int `mapstructure:"page_size"                    docs:"100"`
 
-	// PrimaryUsers maps an IAM account UUID to an internal user with the given
-	// username, uid and gid, and marks that user as USER_TYPE_PRIMARY. Every other
-	// user is treated as USER_TYPE_LIGHTWEIGHT. This is needed because IAM
-	// has no native concept of primary vs. lightweight accounts: by default
-	// every account looks the same, so an explicit allowlist is required to
-	// recognize the subset of "real" organization members.
+	// PrimaryUsers maps an IAM account UUID to a username, uid and gid, and marks
+	// that account USER_TYPE_PRIMARY; every other one is USER_TYPE_LIGHTWEIGHT.
+	// IAM has no native notion of the distinction, so it takes an allowlist.
 	PrimaryUsers map[string]primaryUser `mapstructure:"primary_users" docs:"{}"`
 }
 
@@ -125,34 +122,34 @@ func (c *config) ApplyDefaults() {
 // Indigo IAM JSON shapes
 // ---------------------------------------------------------------------------
 
-type iamName struct {
+type IndigoIAMName struct {
 	Formatted  string `json:"formatted"`
 	GivenName  string `json:"givenName"`
 	FamilyName string `json:"familyName"`
 }
 
-type iamEmail struct {
+type IndigoIAMEmail struct {
 	Value   string `json:"value"`
 	Primary bool   `json:"primary"`
 }
 
-type iamGroupRef struct {
+type IndigoIAMGroupRef struct {
 	Display string `json:"display"`
 	Value   string `json:"value"`
 }
 
-// iamAccount is the shape of a single resource in /iam/account/search.
-type iamAccount struct {
-	ID          string        `json:"id"`
-	UserName    string        `json:"userName"`
-	DisplayName string        `json:"displayName"`
-	Name        iamName       `json:"name"`
-	Active      bool          `json:"active"`
-	Emails      []iamEmail    `json:"emails"`
-	Groups      []iamGroupRef `json:"groups"`
+// IndigoIAMAccount is the shape of a single resource in /iam/account/search.
+type IndigoIAMAccount struct {
+	ID          string              `json:"id"`
+	UserName    string              `json:"userName"`
+	DisplayName string              `json:"displayName"`
+	Name        IndigoIAMName       `json:"name"`
+	Active      bool                `json:"active"`
+	Emails      []IndigoIAMEmail    `json:"emails"`
+	Groups      []IndigoIAMGroupRef `json:"groups"`
 }
 
-func (a *iamAccount) primaryEmail() string {
+func (a *IndigoIAMAccount) primaryEmail() string {
 	for _, e := range a.Emails {
 		if e.Primary {
 			return e.Value
@@ -164,27 +161,27 @@ func (a *iamAccount) primaryEmail() string {
 	return ""
 }
 
-// iamAccountList is the paginated list returned by /iam/account/search.
-type iamAccountList struct {
-	TotalResults int          `json:"totalResults"`
-	ItemsPerPage int          `json:"itemsPerPage"`
-	StartIndex   int          `json:"startIndex"`
-	Resources    []iamAccount `json:"Resources"`
+// IndigoIAMAccountList is the paginated list returned by /iam/account/search.
+type IndigoIAMAccountList struct {
+	TotalResults int                `json:"totalResults"`
+	ItemsPerPage int                `json:"itemsPerPage"`
+	StartIndex   int                `json:"startIndex"`
+	Resources    []IndigoIAMAccount `json:"Resources"`
 }
 
-// iamGroupResource is the shape of a group in /iam/account/{id}/groups.
-type iamGroupResource struct {
+// IndigoIAMGroupResource is the shape of a group in /iam/account/{id}/groups.
+type IndigoIAMGroupResource struct {
 	UUID        string `json:"uuid"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 }
 
-// iamGroupList is the paginated list returned by /iam/account/{id}/groups.
-type iamGroupList struct {
-	TotalResults int                `json:"totalResults"`
-	ItemsPerPage int                `json:"itemsPerPage"`
-	StartIndex   int                `json:"startIndex"`
-	Resources    []iamGroupResource `json:"Resources"`
+// IndigoIAMGroupList is the paginated list returned by /iam/account/{id}/groups.
+type IndigoIAMGroupList struct {
+	TotalResults int                      `json:"totalResults"`
+	ItemsPerPage int                      `json:"itemsPerPage"`
+	StartIndex   int                      `json:"startIndex"`
+	Resources    []IndigoIAMGroupResource `json:"Resources"`
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +264,7 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 			m.conf.IAMBaseURL, startIndex, m.conf.PageSize,
 		)
 
-		var list iamAccountList
+		var list IndigoIAMAccountList
 		if err := m.tokenManager.SendAPIGetRequest(ctx, url, false, &list); err != nil {
 			return err
 		}
@@ -281,23 +278,12 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 			if err := m.cache.StoreUser(u); err != nil {
 				log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: cache error")
 			}
-			// Only the exceptional, remapped case needs a reverse-index
-			// entry; lightweight users already have OpaqueId == IAM UUID.
+			// Lightweight users already have OpaqueId == IAM UUID; only a remap
+			// needs the reverse index, plus an eviction of the pre-remap record —
+			// which StoreUser above cannot have overwritten, its keys differ.
 			if remapped {
-				// The account id is no longer this user's OpaqueId or Username (both
-				// are now the mapped login). Evict every key an earlier sync could
-				// have cached a lightweight record under, so it can't shadow the
-				// promotion: the id and username indexes are both keyed by the
-				// account id, and acc.UserName covers records written before
-				// Username was aligned with OpaqueId.
-				if err := m.cache.DeleteByID(acc.ID); err != nil {
+				if err := m.cache.EvictLightweightRecord(ctx, acc.ID, acc.UserName); err != nil {
 					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record")
-				}
-				if err := m.cache.DeleteByUsername(acc.ID); err != nil {
-					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record by username")
-				}
-				if err := m.cache.DeleteByUsername(acc.UserName); err != nil {
-					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record by IAM userName")
 				}
 				if err := m.cache.StoreIAMUUID(u.Id.OpaqueId, acc.ID); err != nil {
 					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to cache IAM UUID mapping")
@@ -314,52 +300,41 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 	return nil
 }
 
-// accountToProto converts an iamAccount to the CS3 userpb.User type.
-// If acc.ID is a key in conf.PrimaryUsers, the OpaqueId is replaced by the
-// mapped value and the user is marked PRIMARY; otherwise the user is
-// LIGHTWEIGHT and keeps its original IAM UUID as OpaqueId.
-func (m *manager) accountToProto(acc *iamAccount) (*userpb.User, bool) {
-	opaqueID := acc.ID
-	// Keep Username == OpaqueId, the invariant the rest of CERNBox relies on
-	// (cf. user/rest/rest.go, which sets Username = FormatUserID(u.Id)): reva
-	// compares request identifiers against, and reports to clients, either one
-	// interchangeably. The IAM userName is an unrelated UUID for federated
-	// accounts, so nothing human-readable is lost here. Primary users override
-	// both with their real CERN login below.
-	username := acc.ID
-	userType := userpb.UserType_USER_TYPE_LIGHTWEIGHT
-	uid := int64(0)
-	gid := int64(0)
-	remapped := false
-
-	if mapped, ok := m.conf.PrimaryUsers[acc.ID]; ok {
-		opaqueID = mapped.Username
-		username = mapped.Username
-		uid = mapped.UIDNumber
-		gid = mapped.GIDNumber
-		userType = userpb.UserType_USER_TYPE_PRIMARY
-		remapped = true
-	}
-
-	// IAM sets displayName to the account UUID for federated accounts, so
-	// prefer the human-readable formatted name when it is available.
+// accountToProto converts an IndigoIAMAccount to the CS3 userpb.User type.
+// Accounts in conf.PrimaryUsers become PRIMARY, identified by their mapped CERN
+// login and carrying its uid/gid; every other account is LIGHTWEIGHT, identified
+// by its IAM account UUID with no uid/gid. OpaqueId and Username always hold the
+// same value. The bool reports the PRIMARY case, which needs extra cache writes.
+func (m *manager) accountToProto(acc *IndigoIAMAccount) (*userpb.User, bool) {
+	// IAM sets displayName to the account UUID for federated accounts.
 	displayName := acc.DisplayName
 	if acc.Name.Formatted != "" {
 		displayName = acc.Name.Formatted
 	}
 
-	return &userpb.User{
+	// Lightweight is the default: the IAM UUID is both OpaqueId and Username,
+	// the invariant CERNBox relies on (user/rest sets Username = FormatUserID).
+	u := &userpb.User{
 		Id: &userpb.UserId{
-			OpaqueId: opaqueID,
+			OpaqueId: acc.ID,
 			Idp:      m.conf.IDProvider,
-			Type:     userType,
+			Type:     userpb.UserType_USER_TYPE_LIGHTWEIGHT,
 		},
-		Username:    username,
+		Username:    acc.ID,
 		Mail:        acc.primaryEmail(),
 		DisplayName: displayName,
-		UidNumber:   uid,
-		GidNumber:   gid,
-	}, remapped
+	}
+
+	mapped, ok := m.conf.PrimaryUsers[acc.ID]
+	if !ok {
+		return u, false
+	}
+	u.Id.OpaqueId = mapped.Username
+	u.Id.Type = userpb.UserType_USER_TYPE_PRIMARY
+	u.Username = mapped.Username
+	u.UidNumber = mapped.UIDNumber
+	u.GidNumber = mapped.GIDNumber
+	return u, true
 }
 
 // ---------------------------------------------------------------------------
@@ -388,33 +363,20 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 	case "username":
 		u, err = m.cache.GetByUsername(ctx, value)
 		if err != nil {
-			// Indigo IAM access tokens carry only `sub` (the account UUID), and
-			// reva's oidc auth manager always resolves logins via
-			// GetUserByClaim(claim="username", value=<sub>). Lightweight users are
-			// indexed under the account UUID, so the lookup above already resolved
-			// them; getting here means `value` is not a known username, so it has
-			// to be treated as an account id — the case of a primary user, whose
-			// Username is their mapped CERN login rather than the UUID in `sub`.
-			//
-			// Consult the reverse index first: primary users have OpaqueId !=
-			// account id, so their record lives under the remapped OpaqueId. Doing
-			// this before GetByID(value) is what makes the remap authoritative —
-			// otherwise a lightweight record cached under the account id in an
-			// earlier sync (before the user was promoted) would shadow it. Note
-			// that the username index is evicted on remap for the same reason (see
-			// fetchAllUserAccounts), since it is consulted before this fallback.
-			if opaque, e := m.cache.GetOpaqueIDByIAMUUID(ctx, value); e == nil {
-				u, err = m.cache.GetByID(ctx, opaque)
-			} else {
-				// No remap entry: the account id is the OpaqueId (lightweight case).
-				u, err = m.cache.GetByID(ctx, value)
+			// IAM tokens carry only `sub` (the account UUID) and reva's oidc manager
+			// always calls GetUserByClaim("username", <sub>). Lightweight users are
+			// indexed under that UUID, so reaching here means a primary user: map
+			// the UUID to their login via the reverse index.
+			opaqueID := value
+			if mapped, e := m.cache.GetOpaqueIDByIAMUUID(ctx, value); e == nil {
+				opaqueID = mapped
 			}
+			u, err = m.cache.GetByID(ctx, opaqueID)
 		}
 	case "mail":
 		u, err = m.cache.GetByMail(ctx, value)
 	case "uid":
-		// EOS resolves file ownership by integer uid; only primary users have a
-		// non-zero uid, lightweight accounts are never indexed here.
+		// EOS resolves file ownership by uid; only primary users have one.
 		u, err = m.cache.GetByUID(ctx, value)
 	default:
 		u, err = m.cache.GetByID(ctx, value)
@@ -466,14 +428,11 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 
 	iamUUID, err := m.cache.GetIAMUUID(ctx, uid.OpaqueId)
 	if err != nil {
-		// No mapping found — assume the OpaqueId is already the IAM UUID
-		// (this is always true for lightweight users, since they are never
-		// remapped).
+		// Lightweight users are never remapped, so OpaqueId already is the UUID.
 		iamUUID = uid.OpaqueId
 	}
 
-	// The endpoint is paginated and defaults to count=10, so explicit
-	// paging is required to fetch the full membership list.
+	// The endpoint defaults to count=10, so paging is explicit.
 	startIndex := 1
 	var groups []string
 	for {
@@ -481,15 +440,14 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 			"%s/iam/account/%s/groups?startIndex=%d&count=%d",
 			m.conf.IAMBaseURL, iamUUID, startIndex, m.conf.PageSize,
 		)
-		var list iamGroupList
+		var list IndigoIAMGroupList
 		if err := m.tokenManager.SendAPIGetRequest(ctx, url, false, &list); err != nil {
 			return nil, err
 		}
 
 		for _, g := range list.Resources {
-			// Lower-cased to match the group driver's opaque id and the
-			// group names the CERN driver reports, so the exact-match
-			// membership checks downstream cannot be defeated by casing.
+			// Lower-cased to match both group drivers' opaque ids, since the
+			// membership checks downstream are exact-match.
 			groups = append(groups, strings.ToLower(g.Name))
 		}
 
@@ -511,10 +469,5 @@ func (m *manager) IsInGroup(ctx context.Context, uid *userpb.UserId, group strin
 	if err != nil {
 		return false, err
 	}
-	for _, g := range groups {
-		if g == group {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.Contains(groups, group), nil
 }

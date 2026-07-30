@@ -76,10 +76,8 @@ func (c *UserCache) StoreUser(u *userpb.User) error {
 			return err
 		}
 	}
-	// EOS-backed storage resolves file ownership by integer uid via
-	// GetUserByClaim(claim="uid"), so a uid index is required for owner and
-	// permission resolution (and hence sharing) to work. uid 0 is root and is
-	// never a real user, so it is not indexed.
+	// EOS resolves file ownership by uid via GetUserByClaim("uid"). uid 0 means
+	// "none": every lightweight account has it, so indexing them would collide.
 	if u.UidNumber != 0 {
 		if err := store(c.pools, userUIDPrefix+strconv.FormatInt(u.UidNumber, 10), u, c.userTTLSecs); err != nil {
 			return err
@@ -88,22 +86,34 @@ func (c *UserCache) StoreUser(u *userpb.User) error {
 	return nil
 }
 
-// DeleteByID removes the user record stored under the given OpaqueId. Removing
-// an absent key is not an error. Used to evict a stale lightweight record after
-// an account has been remapped to a primary user under a different OpaqueId, so
-// the old record can no longer shadow the remap.
-func (c *UserCache) DeleteByID(opaqueID string) error {
-	return c.pools.DelVal(userIDPrefix + strings.ToLower(opaqueID))
-}
-
-// DeleteByUsername removes the user record stored under the given username.
-// Removing an absent key is not an error. Needed alongside DeleteByID when
-// evicting a remapped account: since lightweight users have Username ==
-// OpaqueId == IAM account UUID, and logins resolve through
-// GetUserByClaim(claim="username", value=<account UUID>), a leftover username
-// entry would be found before the remap indexes are ever consulted.
-func (c *UserCache) DeleteByUsername(username string) error {
-	return c.pools.DelVal(userUsernamePrefix + strings.ToLower(username))
+// EvictLightweightRecord drops the pre-remap record for accountID so it cannot
+// shadow the promoted primary one, filed under the mapped login. Absent keys are
+// fine. Skips user:mail: (shared) and user:uid: (lightweight accounts have none).
+func (c *UserCache) EvictLightweightRecord(ctx context.Context, accountID, iamUserName string) error {
+	// The name key embeds the display name, so read the record before deleting it.
+	if old, err := c.GetByID(ctx, accountID); err == nil && old.DisplayName != "" {
+		nameKey := userNamePrefix +
+			strings.ToLower(accountID) + "_" +
+			strings.ReplaceAll(strings.ToLower(old.DisplayName), " ", "_")
+		if err := c.pools.DelVal(nameKey); err != nil {
+			return err
+		}
+	}
+	if err := c.pools.DelVal(userIDPrefix + strings.ToLower(accountID)); err != nil {
+		return err
+	}
+	// Lightweight users have Username == OpaqueId == account UUID, and logins
+	// resolve by username, so this key would win over the remap indexes.
+	if err := c.pools.DelVal(userUsernamePrefix + strings.ToLower(accountID)); err != nil {
+		return err
+	}
+	// Records written before Username was aligned with OpaqueId.
+	if iamUserName != "" && !strings.EqualFold(iamUserName, accountID) {
+		if err := c.pools.DelVal(userUsernamePrefix + strings.ToLower(iamUserName)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetByID looks up a user by their OpaqueId.
@@ -133,8 +143,7 @@ func (c *UserCache) GetByMail(ctx context.Context, mail string) (*userpb.User, e
 	return &u, nil
 }
 
-// GetByUID looks up a user by their numeric uid (as a decimal string). Used to
-// resolve EOS file ownership back to a CS3 user.
+// GetByUID looks up a user by their numeric uid, as a decimal string.
 func (c *UserCache) GetByUID(ctx context.Context, uid string) (*userpb.User, error) {
 	var u userpb.User
 	if err := fetch(ctx, c.pools, userUIDPrefix+uid, &u); err != nil {
@@ -187,16 +196,9 @@ func (c *UserCache) GetGroups(ctx context.Context, opaqueID string) ([]string, e
 	return groups, nil
 }
 
-// StoreIAMUUID records the two-way mapping between a remapped OpaqueId and
-// the original IAM account UUID, so callers can resolve in either direction:
-//   - GetIAMUUID:   opaqueID -> iamUUID  (used by the user driver for
-//     group-membership lookups against the IAM API)
-//   - GetOpaqueIDByIAMUUID: iamUUID -> opaqueID  (used by the group driver
-//     to report the same OpaqueId for a member that GetUser/FindUsers
-//     would report)
-//
-// Only called for accounts that were actually remapped via primary_users;
-// the common case (OpaqueId == IAM UUID) needs no entry in either direction.
+// StoreIAMUUID records the two-way mapping between a remapped OpaqueId and the
+// IAM account UUID: GetIAMUUID for calls into the IAM API, GetOpaqueIDByIAMUUID
+// so the group driver reports the OpaqueId GetUser would. Remapped accounts only.
 func (c *UserCache) StoreIAMUUID(opaqueID, iamUUID string) error {
 	if err := store(c.pools, userIAMUUIDPrefix+strings.ToLower(opaqueID), iamUUID, c.userTTLSecs); err != nil {
 		return err
@@ -204,9 +206,8 @@ func (c *UserCache) StoreIAMUUID(opaqueID, iamUUID string) error {
 	return store(c.pools, userOpaqueIDByIAMUUID+strings.ToLower(iamUUID), opaqueID, c.userTTLSecs)
 }
 
-// GetIAMUUID resolves the IAM account UUID for a given OpaqueId. If no
-// mapping is present, callers should fall back to treating opaqueID itself
-// as the IAM UUID.
+// GetIAMUUID resolves the IAM account UUID for an OpaqueId. On a miss, callers
+// should treat opaqueID as the UUID itself.
 func (c *UserCache) GetIAMUUID(ctx context.Context, opaqueID string) (string, error) {
 	var uuid string
 	if err := fetch(ctx, c.pools, userIAMUUIDPrefix+strings.ToLower(opaqueID), &uuid); err != nil {
@@ -215,9 +216,8 @@ func (c *UserCache) GetIAMUUID(ctx context.Context, opaqueID string) (string, er
 	return uuid, nil
 }
 
-// GetOpaqueIDByIAMUUID resolves the public OpaqueId for a given IAM account
-// UUID. If no mapping is present, callers should fall back to treating the
-// IAM UUID itself as the OpaqueId (the common, non-remapped case).
+// GetOpaqueIDByIAMUUID resolves the public OpaqueId for an IAM account UUID. On
+// a miss, callers should treat the UUID as the OpaqueId (the non-remapped case).
 func (c *UserCache) GetOpaqueIDByIAMUUID(ctx context.Context, iamUUID string) (string, error) {
 	var opaqueID string
 	if err := fetch(ctx, c.pools, userOpaqueIDByIAMUUID+strings.ToLower(iamUUID), &opaqueID); err != nil {

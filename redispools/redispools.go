@@ -61,8 +61,8 @@ func (p *RedisPools) SetVal(key, val string, expiration int) error {
 	return errors.New("redispools: unable to get connection from redis pool")
 }
 
-// DelVal deletes a key from the redis pool. Deleting a missing key is not an
-// error. Writes go to the master, like SetVal.
+// DelVal deletes a key. Deleting a missing key is not an error. Goes to the
+// master, like SetVal.
 func (p *RedisPools) DelVal(key string) error {
 	conn := p.Write.Get()
 	defer conn.Close()
