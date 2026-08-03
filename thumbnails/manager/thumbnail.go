@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 
 	"github.com/cernbox/reva-plugins/thumbnails/cache"
 	"github.com/cernbox/reva-plugins/thumbnails/cache/registry"
@@ -121,6 +122,12 @@ func (t *Thumbnail) GetThumbnail(ctx context.Context, file, etag string, width, 
 	thumb := imaging.Thumbnail(img, match.Dx(), match.Dy(), imaging.Linear)
 	log.Debug().Msgf("thumbnails: finished resize %s", file)
 
+	// formats without an alpha channel would render transparent pixels as
+	// black, so flatten them onto a white background instead
+	if !supportsTransparency(outType) {
+		thumb = flatten(thumb, color.White)
+	}
+
 	var buf bytes.Buffer
 	format, opts := t.getEncoderFormat(outType)
 	err = imaging.Encode(&buf, thumb, format, opts...)
@@ -139,6 +146,26 @@ func (t *Thumbnail) GetThumbnail(ctx context.Context, file, etag string, width, 
 	}
 
 	return data, getMimeType(outType), nil
+}
+
+// supportsTransparency reports whether the output format can carry an alpha channel.
+func supportsTransparency(ttype FileType) bool {
+	switch ttype {
+	case PNGType, BMPType:
+		return true
+	default:
+		return false
+	}
+}
+
+// flatten composites img over a background of the given color, so transparent
+// areas take that color instead of being encoded as black.
+func flatten(img *image.NRGBA, bg color.Color) *image.NRGBA {
+	if img.Opaque() {
+		return img
+	}
+	b := img.Bounds()
+	return imaging.OverlayCenter(imaging.New(b.Dx(), b.Dy(), bg), img, 1.0)
 }
 
 func getMimeType(ttype FileType) string {
