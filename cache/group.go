@@ -1,0 +1,168 @@
+package cache
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "strings"
+
+    redispools "github.com/cernbox/reva-plugins/redispools"
+    grouppb "github.com/cs3org/go-cs3apis/cs3/identity/group/v1beta1"
+    userpb "github.com/cs3org/go-cs3apis/cs3/identity/user/v1beta1"
+    "github.com/cs3org/reva/v3/pkg/appctx"
+    "github.com/cs3org/reva/v3/pkg/errtypes"
+)
+
+// Key schema:
+//   group:id:<opaqueID>                          → JSON grouppb.Group
+//   group:name:<opaqueID>_<display_lower_snake>  → bare opaqueID string
+//   group:members:<opaqueID>                     → JSON []*userpb.UserId
+//   group:iamuuid:<opaqueID>                     → IAM group UUID
+//
+// A group's opaqueID is its lower-cased name, for both providers. Drivers whose
+// upstream API is UUID-addressed (Indigo IAM) park that UUID in group:iamuuid:.
+
+const (
+    groupIDPrefix      = "group:id:"
+    groupNamePrefix    = "group:name:"
+    groupMembersPrefix = "group:members:"
+    groupIAMUUIDPrefix = "group:iamuuid:" // opaqueID (name) -> IAM group UUID
+)
+
+// GroupCache is a Redis-backed cache for CS3 group objects and their member lists.
+type GroupCache struct {
+    pools          *redispools.RedisPools
+    groupTTLSecs   int // 5 × fetch_interval
+    membersTTLSecs int // member list TTL
+}
+
+// NewGroupCache creates a GroupCache.
+//   fetchInterval        – seconds between full syncs
+//   membersCacheMinutes  – TTL for per-group member lists
+func NewGroupCache(pools *redispools.RedisPools, fetchInterval, membersCacheMinutes int) *GroupCache {
+    return &GroupCache{
+        pools:          pools,
+        groupTTLSecs:   5 * fetchInterval,
+        membersTTLSecs: membersCacheMinutes * 60,
+    }
+}
+
+// StoreGroup writes a group under all applicable index keys.
+func (c *GroupCache) StoreGroup(g *grouppb.Group) error {
+    if err := store(c.pools, groupIDPrefix+strings.ToLower(g.Id.OpaqueId), g, c.groupTTLSecs); err != nil {
+        return err
+    }
+    if g.DisplayName != "" {
+        nameKey := groupNamePrefix +
+            strings.ToLower(g.Id.OpaqueId) + "_" +
+            strings.ReplaceAll(strings.ToLower(g.DisplayName), " ", "_")
+        // Store only the opaqueID; callers resolve it through GetByID.
+        if err := store(c.pools, nameKey, g.Id.OpaqueId, c.groupTTLSecs); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+// GetByID looks up a group by its OpaqueId.
+func (c *GroupCache) GetByID(ctx context.Context, opaqueID string) (*grouppb.Group, error) {
+    var g grouppb.Group
+    if err := fetch(ctx, c.pools, groupIDPrefix+strings.ToLower(opaqueID), &g); err != nil {
+        return nil, errtypes.NotFound(opaqueID)
+    }
+    return &g, nil
+}
+
+// GetByName looks up a group by display name. It scans the name index to find
+// the opaqueID, then resolves the full object via GetByID.
+func (c *GroupCache) GetByName(ctx context.Context, name string) (*grouppb.Group, error) {
+    pattern := fmt.Sprintf(
+        "%s*_%s*",
+        groupNamePrefix,
+        strings.ReplaceAll(strings.ToLower(name), " ", "_"),
+    )
+    values, err := scanAndFetch(ctx, c.pools, pattern)
+    if err != nil {
+        return nil, err
+    }
+    if len(values) == 0 {
+        return nil, errtypes.NotFound(name)
+    }
+    // values[0] is the bare opaqueID stored by StoreGroup, JSON-encoded (quoted).
+    var opaqueID string
+    if err := json.Unmarshal([]byte(values[0]), &opaqueID); err != nil {
+        return nil, errtypes.NotFound(name)
+    }
+    return c.GetByID(ctx, opaqueID)
+}
+
+// Find scans all group index keys matching query and returns the deduplicated
+// set of groups. Entries may be either a JSON-encoded Group (from the primary
+// key) or a bare opaqueID string (from the name index); both are handled.
+func (c *GroupCache) Find(ctx context.Context, query string) ([]*grouppb.Group, error) {
+    pattern := fmt.Sprintf(
+        "group:*%s*",
+        strings.ReplaceAll(strings.ToLower(query), " ", "_"),
+    )
+    values, err := scanAndFetch(ctx, c.pools, pattern)
+    if err != nil {
+        return nil, err
+    }
+
+    seen := make(map[string]*grouppb.Group)
+    for _, s := range values {
+        // Try to decode as a full Group first.
+        var g grouppb.Group
+        if err := json.Unmarshal([]byte(s), &g); err == nil && g.Id != nil {
+            seen[g.Id.OpaqueId] = &g
+            continue
+        }
+        // Otherwise it's a bare opaqueID from the name index (JSON-encoded,
+        // i.e. quoted) — decode and dereference it.
+        var opaqueID string
+        if err := json.Unmarshal([]byte(s), &opaqueID); err != nil {
+            continue
+        }
+        if full, err := c.GetByID(ctx, opaqueID); err == nil {
+            seen[full.Id.OpaqueId] = full
+        }
+    }
+
+    result := make([]*grouppb.Group, 0, len(seen))
+    for _, g := range seen {
+        result = append(result, g)
+    }
+    appctx.GetLogger(ctx).Debug().Str("pattern", pattern).Int("results", len(result)).Msg("cache: Find groups")
+    return result, nil
+}
+
+// StoreMembers writes the member list for a group.
+func (c *GroupCache) StoreMembers(gid *grouppb.GroupId, members []*userpb.UserId) error {
+    return store(c.pools, groupMembersPrefix+strings.ToLower(gid.OpaqueId), members, c.membersTTLSecs)
+}
+
+// GetMembers returns the cached member list for a group, or an error if the
+// entry is absent (so the caller can fall back to a live API fetch).
+func (c *GroupCache) GetMembers(ctx context.Context, opaqueID string) ([]*userpb.UserId, error) {
+    var members []*userpb.UserId
+    if err := fetch(ctx, c.pools, groupMembersPrefix+strings.ToLower(opaqueID), &members); err != nil {
+        return nil, err
+    }
+    return members, nil
+}
+
+// StoreIAMUUID records the IAM group UUID behind a group's opaqueID, which the
+// driver needs before calling the UUID-addressed IAM endpoints.
+func (c *GroupCache) StoreIAMUUID(opaqueID, iamUUID string) error {
+    return store(c.pools, groupIAMUUIDPrefix+strings.ToLower(opaqueID), iamUUID, c.groupTTLSecs)
+}
+
+// GetIAMUUID resolves the IAM group UUID for an opaqueID. On a miss, callers
+// should treat opaqueID as the UUID itself.
+func (c *GroupCache) GetIAMUUID(ctx context.Context, opaqueID string) (string, error) {
+    var iamUUID string
+    if err := fetch(ctx, c.pools, groupIAMUUIDPrefix+strings.ToLower(opaqueID), &iamUUID); err != nil {
+        return "", err
+    }
+    return iamUUID, nil
+}
