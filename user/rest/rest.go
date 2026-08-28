@@ -92,8 +92,8 @@ type config struct {
 	// The time in seconds between bulk fetch of user accounts
 	UserFetchInterval int `mapstructure:"user_fetch_interval" docs:"3600"`
 
-	// Endpoint of the lifecycle daemon
-	LifecycleEndpoint string `mapstructure:"lifecycle_endpoint" docs:"https://cbox-lifecycle.cern.ch"`
+	// Endpoint of the lifecycle daemon, set per environment
+	LifecycleEndpoint string `mapstructure:"lifecycle_endpoint"`
 	// Shared secret to be passed as bearer token to the lifecycle daemon
 	LifecycleSecret string `mapstructure:"lifecycle_secret"`
 }
