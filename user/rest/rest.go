@@ -89,6 +89,11 @@ type config struct {
 	TargetAPI string `mapstructure:"target_api" docs:"authorization-service-api"`
 	// The time in seconds between bulk fetch of user accounts
 	UserFetchInterval int `mapstructure:"user_fetch_interval" docs:"3600"`
+
+	// Endpoint of the lifecycle daemon
+	LifecycleEndpoint string `mapstructure:"lifecycle_endpoint" docs:"https://cbox-lifecycle.cern.ch"`
+	// Shared secret to be passed as bearer token to the lifecycle daemon
+	LifecycleSecret string `mapstructure:"lifecycle_secret"`
 }
 
 func (c *config) ApplyDefaults() {
@@ -311,7 +316,6 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 			log.Error().Err(err).Str("user", u.Username).Msg("rest: error fetching cached user details to check if the user has left CERN")
 		} else {
 			if cachedUser.Status != userpb.UserStatus_USER_STATUS_EXPIRING {
-				log.Info().Str("user", u.Username).Msg("rest: user has left CERN, notifying lifecycle manager")
 				if err := m.notifyLifecycleManager(ctx, u); err != nil {
 					log.Error().Err(err).Str("user", u.Username).Msg("rest: error notifying lifecycle manager about user leaving CERN")
 				}
@@ -350,7 +354,14 @@ func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]
 }
 
 func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User) error {
-	// TODO(lopresti) notify our lifecycle daemon that the user has left CERN
+	log := appctx.GetLogger(ctx)
+	// call the lifecycle daemon if configured
+	if m.conf.LifecycleEndpoint != "" && m.conf.LifecycleSecret != "" {
+
+	}
+	else {
+		log.Warning().Str("user", u.Username).Msg("rest: user has left CERN, no lifecycle endpoint configured to notify")
+	}
 	return nil
 }
 
