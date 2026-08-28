@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -371,6 +372,9 @@ func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User)
 			return err
 		}
 		defer res.Body.Close()
+
+		body, _ := io.ReadAll(res.Body)
+		log.Info().Str("user", user.Username).Int("status", res.StatusCode).Str("response", string(body)).Msg("rest: lifecycle daemon response")
 
 		if res.StatusCode < 200 || res.StatusCode > 299 {
 			return fmt.Errorf("rest: lifecycle daemon returned %s for user %s", res.Status, user.Username)
