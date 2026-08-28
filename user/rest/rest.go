@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	neturl "net/url"
 	"os"
 	"os/signal"
@@ -357,10 +358,25 @@ func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User)
 	log := appctx.GetLogger(ctx)
 	// call the lifecycle daemon if configured
 	if m.conf.LifecycleEndpoint != "" && m.conf.LifecycleSecret != "" {
+		url := fmt.Sprintf("%s/cbox/account/%s", m.conf.LifecycleEndpoint, neturl.PathEscape(user.Username))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, strings.NewReader(`{"subscriptionStatus": "GracePeriod"}`))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+m.conf.LifecycleSecret)
+		req.Header.Set("Content-Type", "application/json")
 
-	}
-	else {
-		log.Warning().Str("user", u.Username).Msg("rest: user has left CERN, no lifecycle endpoint configured to notify")
+		res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		if res.StatusCode < 200 || res.StatusCode > 299 {
+			return fmt.Errorf("rest: lifecycle daemon returned %s for user %s", res.Status, user.Username)
+		}
+	} else {
+		log.Warn().Str("user", user.Username).Msg("rest: user has left CERN, no lifecycle endpoint configured to notify")
 	}
 	return nil
 }
