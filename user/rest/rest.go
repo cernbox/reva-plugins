@@ -377,7 +377,7 @@ func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User)
 		log.Info().Str("user", user.Username).Int("status", res.StatusCode).Str("response", string(body)).Msg("rest: lifecycle daemon response")
 
 		if res.StatusCode != http.StatusOK {
-			return fmt.Errorf("rest: lifecycle daemon returned %s for user %s: %s", res.Status, user.Username, body)
+			return fmt.Errorf("rest: lifecycle daemon failed with status %s", res.Status)
 		}
 	} else {
 		log.Warn().Str("user", user.Username).Msg("rest: user has left CERN, no lifecycle endpoint configured to notify")
