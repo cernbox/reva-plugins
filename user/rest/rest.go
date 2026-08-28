@@ -22,6 +22,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	neturl "net/url"
 	"os"
 	"os/signal"
@@ -89,6 +91,11 @@ type config struct {
 	TargetAPI string `mapstructure:"target_api" docs:"authorization-service-api"`
 	// The time in seconds between bulk fetch of user accounts
 	UserFetchInterval int `mapstructure:"user_fetch_interval" docs:"3600"`
+
+	// Endpoint of the lifecycle daemon, set per environment
+	LifecycleEndpoint string `mapstructure:"lifecycle_endpoint"`
+	// Shared secret to be passed as bearer token to the lifecycle daemon
+	LifecycleSecret string `mapstructure:"lifecycle_secret"`
 }
 
 func (c *config) ApplyDefaults() {
@@ -311,7 +318,6 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 			log.Error().Err(err).Str("user", u.Username).Msg("rest: error fetching cached user details to check if the user has left CERN")
 		} else {
 			if cachedUser.Status != userpb.UserStatus_USER_STATUS_EXPIRING {
-				log.Info().Str("user", u.Username).Msg("rest: user has left CERN, notifying lifecycle manager")
 				if err := m.notifyLifecycleManager(ctx, u); err != nil {
 					log.Error().Err(err).Str("user", u.Username).Msg("rest: error notifying lifecycle manager about user leaving CERN")
 				}
@@ -350,7 +356,32 @@ func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]
 }
 
 func (m *manager) notifyLifecycleManager(ctx context.Context, user *userpb.User) error {
-	// TODO(lopresti) notify our lifecycle daemon that the user has left CERN
+	log := appctx.GetLogger(ctx)
+	// call the lifecycle daemon if configured
+	if m.conf.LifecycleEndpoint != "" && m.conf.LifecycleSecret != "" {
+		url := fmt.Sprintf("%s/cbox/account/%s", m.conf.LifecycleEndpoint, neturl.PathEscape(user.Username))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, strings.NewReader(`{"subscriptionStatus": "GracePeriod"}`))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+m.conf.LifecycleSecret)
+		req.Header.Set("Content-Type", "application/json")
+
+		res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			return err
+		}
+		defer res.Body.Close()
+
+		body, _ := io.ReadAll(res.Body)
+		log.Info().Str("user", user.Username).Int("status", res.StatusCode).Str("response", string(body)).Msg("rest: lifecycle daemon response")
+
+		if res.StatusCode != http.StatusOK {
+			return fmt.Errorf("rest: lifecycle daemon failed with status %s", res.Status)
+		}
+	} else {
+		log.Warn().Str("user", user.Username).Msg("rest: user has left CERN, no lifecycle endpoint configured to notify")
+	}
 	return nil
 }
 
