@@ -193,9 +193,13 @@ type Identity struct {
 	Upn                 string `json:"upn"`
 	DisplayName         string `json:"displayName"`
 	Source              string `json:"source,omitempty"`
-	ActiveUser          bool   `json:"activeUser,omitempty"`
-	UID                 int    `json:"uid,omitempty"`
-	GID                 int    `json:"gid,omitempty"`
+	// ActiveUser tells whether the owner is a currently active CERN user. It is
+	// only meaningful for primary accounts; secondary/service accounts always
+	// report it as false, so for those we look at Blocked instead.
+	ActiveUser bool `json:"activeUser,omitempty"`
+	Blocked bool `json:"blocked,omitempty"`
+	UID     int  `json:"uid,omitempty"`
+	GID     int  `json:"gid,omitempty"`
 }
 
 // IdentitiesResponse contains the expected response from grappa
@@ -230,7 +234,7 @@ func (i *Identity) UserType() userpb.UserType {
 }
 
 func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1.0/Identity?filter=unconfirmed%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser", m.conf.APIBaseURL)
+	url := fmt.Sprintf("%s/api/v1.0/Identity?filter=unconfirmed%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser&field=blocked", m.conf.APIBaseURL)
 
 	for {
 		var r IdentitiesResponse
@@ -308,18 +312,27 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 	}
 
 	u.Username = revautils.FormatUserID(u.Id)
-	if i.ActiveUser == false && u.Id.Type == userpb.UserType_USER_TYPE_PRIMARY {
-		// keep track that this primary account is going to expire, i.e. has left CERN
+	// An account should enter the CERNBox grace period depending on the signal which depends on the account type.
+	//   - primary:            the owner is no longer an active CERN user
+	//   - secondary, service: these always report activeUser=false, so trust the blocked flag.
+	var leaving bool
+	switch u.Id.Type {
+	case userpb.UserType_USER_TYPE_PRIMARY:
+		leaving = !i.ActiveUser
+	case userpb.UserType_USER_TYPE_SECONDARY, userpb.UserType_USER_TYPE_SERVICE:
+		leaving = i.Blocked
+	}
+	if leaving {
 		u.Status = userpb.UserStatus_USER_STATUS_EXPIRING
 
-		// check if the user was active before: if so, notify the lifecycle manager that the user has left CERN
+		// only notify on the transition, i.e. the first time we see the account leaving
 		cachedUser, err := m.cache.GetByID(ctx, u.Id.OpaqueId)
 		if err != nil {
-			log.Error().Err(err).Str("user", u.Username).Msg("rest: error fetching cached user details to check if the user has left CERN")
+			log.Error().Err(err).Str("user", u.Username).Msg("rest: error fetching cached user details to check if the account is leaving CERN")
 		} else {
 			if cachedUser.Status != userpb.UserStatus_USER_STATUS_EXPIRING {
 				if err := m.notifyLifecycleManager(ctx, u); err != nil {
-					log.Error().Err(err).Str("user", u.Username).Msg("rest: error notifying lifecycle manager about user leaving CERN")
+					log.Error().Err(err).Str("user", u.Username).Msg("rest: error notifying lifecycle manager about account leaving CERN")
 				}
 			}
 		}
