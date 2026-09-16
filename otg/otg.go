@@ -72,7 +72,7 @@ func (s *Otg) Prefix() string {
 }
 
 func (s *Otg) Unprotected() []string {
-	return nil
+	return []string{"/"}
 }
 
 func (s *Otg) Handler() http.Handler {
