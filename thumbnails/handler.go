@@ -64,6 +64,9 @@ const (
 	DefaultWidth int = 32
 	// DefaultHeight is the default height when the HTTP request is missing the height
 	DefaultHeight int = 32
+
+	// mount is where the service is served.
+	mount = "/thumbnails"
 )
 
 type config struct {
@@ -73,7 +76,6 @@ type config struct {
 	Cache            string                            `mapstructure:"cache"`
 	CacheDrivers     map[string]map[string]interface{} `mapstructure:"cache_drivers"`
 	OutputType       string                            `mapstructure:"output_type"`
-	Prefix           string                            `mapstructure:"prefix"`
 	Insecure         bool                              `mapstructure:"insecure"`
 }
 
@@ -90,9 +92,6 @@ type Thumbnails struct {
 }
 
 func (c *config) ApplyDefaults() {
-	if c.Prefix == "" {
-		c.Prefix = "thumbnails"
-	}
 	if c.OutputType == "" {
 		c.OutputType = "jpg"
 	}
@@ -157,7 +156,19 @@ func (s *Thumbnails) getThumbnail(ctx context.Context) (*manager.Thumbnail, erro
 	return s.thumbnail, s.thumbnailErr
 }
 
-func (s *Thumbnails) Handler() http.Handler {
+// Routes declares the two thumbnail subtrees. They are mounts because the
+// handler reads the resource path out of the URL itself, and they are declared
+// separately because a public-link thumbnail authenticates with the link
+// rather than with the caller's credentials.
+//
+// Each mount hands the handler the path with the service's own prefix removed,
+// which is what it has always been given.
+func (s *Thumbnails) Routes(r *router.Router) {
+	r.Mount(mount+"/files", http.StripPrefix(mount, s.handler()))
+	r.Mount(mount+"/public-files", http.StripPrefix(mount, s.handler()), router.Unprotected())
+}
+
+func (s *Thumbnails) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var head string
 
@@ -478,13 +489,9 @@ func checkMethods(r *http.Request, methods ...string) bool {
 }
 
 func (s *Thumbnails) Prefix() string {
-	return s.c.Prefix
+	return mount
 }
 
 func (s *Thumbnails) Close() error {
 	return nil
-}
-
-func (s *Thumbnails) Unprotected() []string {
-	return []string{"/public-files"}
 }

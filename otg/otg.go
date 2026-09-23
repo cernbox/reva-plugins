@@ -11,15 +11,18 @@ import (
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
+	"github.com/cs3org/reva/v3/pkg/rhttp/router"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 )
+
+// mount is where the service is served.
+const mount = "/otg"
 
 func init() {
 	reva.RegisterPlugin(Otg{})
 }
 
 type config struct {
-	Prefix     string `mapstructure:"prefix"`
 	DbUsername string `mapstructure:"db_username"`
 	DbPassword string `mapstructure:"db_password"`
 	DbHost     string `mapstructure:"db_host"`
@@ -47,12 +50,6 @@ func (s *Otg) Close() error {
 	return s.db.Close()
 }
 
-func (c *config) ApplyDefaults() {
-	if c.Prefix == "" {
-		c.Prefix = "otg"
-	}
-}
-
 // Otg is an HTTP service that
 // expose an otg to the user.
 type Otg struct {
@@ -68,36 +65,30 @@ func (Otg) RevaPlugin() reva.PluginInfo {
 }
 
 func (s *Otg) Prefix() string {
-	return s.conf.Prefix
+	return mount
 }
 
-func (s *Otg) Unprotected() []string {
-	return []string{"/"}
+// Routes declares the single endpoint. It carries no user data and is read
+// before anyone has logged in, so it needs no authentication.
+func (s *Otg) Routes(r *router.Router) {
+	r.Get(mount, s.handleGet, router.Unprotected())
 }
 
-func (s *Otg) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			code := http.StatusMethodNotAllowed
-			http.Error(w, http.StatusText(code), code)
-			return
+func (s *Otg) handleGet(w http.ResponseWriter, r *http.Request) {
+	num, msg, err := s.getOTG(r.Context())
+	if err != nil {
+		var code int
+		if errors.Is(err, sql.ErrNoRows) {
+			code = http.StatusNoContent
+		} else {
+			code = http.StatusInternalServerError
+			appctx.GetLogger(r.Context()).Error().Err(err).Msg("otg: failed to read OTG record")
 		}
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
 
-		num, msg, err := s.getOTG(r.Context())
-		if err != nil {
-			var code int
-			if errors.Is(err, sql.ErrNoRows) {
-				code = http.StatusNoContent
-			} else {
-				code = http.StatusInternalServerError
-				appctx.GetLogger(r.Context()).Error().Err(err).Msg("otg: failed to read OTG record")
-			}
-			http.Error(w, http.StatusText(code), code)
-			return
-		}
-
-		encodeMessageAndSend(w, num, msg)
-	})
+	encodeMessageAndSend(w, num, msg)
 }
 
 func encodeMessageAndSend(w http.ResponseWriter, num string, msg string) {
