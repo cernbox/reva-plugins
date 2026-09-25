@@ -64,10 +64,6 @@ func (Otg) RevaPlugin() reva.PluginInfo {
 	}
 }
 
-func (s *Otg) Prefix() string {
-	return mount
-}
-
 // Routes declares the single endpoint. It carries no user data and is read
 // before anyone has logged in, so it needs no authentication.
 func (s *Otg) Routes(r *router.Router) {

@@ -125,10 +125,6 @@ func (c *config) init() {
 	c.GatewaySvc = sharedconf.GetGatewaySVC(c.GatewaySvc)
 }
 
-func (s *svc) Prefix() string {
-	return mount
-}
-
 // Routes declares the backup and restore endpoints.
 func (s *svc) Routes(r *router.Router) {
 	r.Group(mount, func(r *router.Router) {

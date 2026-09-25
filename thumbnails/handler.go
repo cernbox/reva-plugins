@@ -488,10 +488,6 @@ func checkMethods(r *http.Request, methods ...string) bool {
 	return false
 }
 
-func (s *Thumbnails) Prefix() string {
-	return mount
-}
-
 func (s *Thumbnails) Close() error {
 	return nil
 }
