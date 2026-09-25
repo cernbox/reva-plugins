@@ -164,29 +164,30 @@ func (s *Thumbnails) getThumbnail(ctx context.Context) (*manager.Thumbnail, erro
 // Each mount hands the handler the path with the service's own prefix removed,
 // which is what it has always been given.
 func (s *Thumbnails) Routes(r *router.Router) {
-	r.Mount(mount+"/files", http.StripPrefix(mount, s.handler()))
-	r.Mount(mount+"/public-files", http.StripPrefix(mount, s.handler()), router.Unprotected())
+	r.Mount(mount+"/files", http.StripPrefix(mount+"/files", s.userThumbnails()))
+	r.Mount(mount+"/public-files", http.StripPrefix(mount+"/public-files", s.publicThumbnails()), router.Unprotected())
 }
 
-func (s *Thumbnails) handler() http.Handler {
+// userThumbnails serves a thumbnail of a resource the caller owns or has
+// access to.
+func (s *Thumbnails) userThumbnails() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var head string
-
-		head, r.URL.Path = router.ShiftPath(r.URL.Path)
-		switch head {
-		case "files":
-			if !checkMethods(r, http.MethodGet) {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			s.davUserContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
-		case "public-files":
-			if !checkMethods(r, http.MethodGet, http.MethodHead) {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			s.davPublicContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
+		if !checkMethods(r, http.MethodGet) {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
+		s.davUserContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
+	})
+}
+
+// publicThumbnails serves a thumbnail of a resource behind a public link.
+func (s *Thumbnails) publicThumbnails() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !checkMethods(r, http.MethodGet, http.MethodHead) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		s.davPublicContext(s.Thumbnail(w, r)).ServeHTTP(w, r)
 	})
 }
 
