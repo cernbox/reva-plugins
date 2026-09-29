@@ -316,11 +316,11 @@ func (m *manager) accountToProto(acc *IndigoIAMAccount) (*userpb.User, bool) {
 	// the invariant CERNBox relies on (user/rest sets Username = FormatUserID).
 	u := &userpb.User{
 		Id: &userpb.UserId{
-			OpaqueId: acc.ID,
+			OpaqueId: acc.UserName,
 			Idp:      m.conf.IDProvider,
 			Type:     userpb.UserType_USER_TYPE_LIGHTWEIGHT,
 		},
-		Username:    acc.ID,
+		Username:    acc.UserName,
 		Mail:        acc.primaryEmail(),
 		DisplayName: displayName,
 	}
