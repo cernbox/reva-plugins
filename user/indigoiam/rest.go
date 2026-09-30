@@ -274,19 +274,18 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 			if !acc.Active {
 				continue
 			}
-			u, remapped := m.accountToProto(acc)
+			u, remapped := m.indigoAccountToCs3User(acc)
 			if err := m.cache.StoreUser(u); err != nil {
 				log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: cache error")
 			}
-			// Lightweight users already have OpaqueId == IAM UUID; only a remap
-			// needs the reverse index, plus an eviction of the pre-remap record —
-			// which StoreUser above cannot have overwritten, its keys differ.
+			// Tokens and the IAM API go by account UUID, so every account needs the index.
+			if err := m.cache.StoreIAMUUID(u.Id.OpaqueId, acc.ID); err != nil {
+				log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to cache IAM UUID mapping")
+			}
+			// StoreUser cannot have overwritten the pre-remap record, its keys differ.
 			if remapped {
 				if err := m.cache.EvictLightweightRecord(ctx, acc.ID, acc.UserName); err != nil {
 					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to evict stale lightweight record")
-				}
-				if err := m.cache.StoreIAMUUID(u.Id.OpaqueId, acc.ID); err != nil {
-					log.Error().Err(err).Str("uuid", acc.ID).Msg("indigoiam user: failed to cache IAM UUID mapping")
 				}
 			}
 		}
@@ -300,12 +299,12 @@ func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
 	return nil
 }
 
-// accountToProto converts an IndigoIAMAccount to the CS3 userpb.User type.
+// indigoAccountToCs3User converts an IndigoIAMAccount to the CS3 userpb.User type.
 // Accounts in conf.PrimaryUsers become PRIMARY, identified by their mapped CERN
 // login and carrying its uid/gid; every other account is LIGHTWEIGHT, identified
 // by its IAM account UUID with no uid/gid. OpaqueId and Username always hold the
 // same value. The bool reports the PRIMARY case, which needs extra cache writes.
-func (m *manager) accountToProto(acc *IndigoIAMAccount) (*userpb.User, bool) {
+func (m *manager) indigoAccountToCs3User(acc *IndigoIAMAccount) (*userpb.User, bool) {
 	// IAM sets displayName to the account UUID for federated accounts.
 	displayName := acc.DisplayName
 	if acc.Name.Formatted != "" {
@@ -364,9 +363,8 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 		u, err = m.cache.GetByUsername(ctx, value)
 		if err != nil {
 			// IAM tokens carry only `sub` (the account UUID) and reva's oidc manager
-			// always calls GetUserByClaim("username", <sub>). Lightweight users are
-			// indexed under that UUID, so reaching here means a primary user: map
-			// the UUID to their login via the reverse index.
+			// always calls GetUserByClaim("username", <sub>): map the UUID to the
+			// account's OpaqueId via the reverse index.
 			opaqueID := value
 			if mapped, e := m.cache.GetOpaqueIDByIAMUUID(ctx, value); e == nil {
 				opaqueID = mapped
@@ -428,7 +426,7 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 
 	iamUUID, err := m.cache.GetIAMUUID(ctx, uid.OpaqueId)
 	if err != nil {
-		// Lightweight users are never remapped, so OpaqueId already is the UUID.
+		// Not indexed yet: assume OpaqueId already is the UUID.
 		iamUUID = uid.OpaqueId
 	}
 
