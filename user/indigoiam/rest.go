@@ -325,7 +325,7 @@ func (m *manager) accountToProto(acc *IndigoIAMAccount) (*userpb.User, bool) {
 		DisplayName: displayName,
 	}
 
-	mapped, ok := m.conf.PrimaryUsers[acc.ID]
+	mapped, ok := m.conf.PrimaryUsers[acc.UserName]
 	if !ok {
 		return u, false
 	}
