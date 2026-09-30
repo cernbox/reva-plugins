@@ -356,19 +356,19 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 				continue
 			}
 
-			opaqueID := acc.ID
-			userType := userpb.UserType_USER_TYPE_LIGHTWEIGHT
-
-			if mapped, err := m.userCache.GetOpaqueIDByIAMUUID(ctx, acc.ID); err == nil {
-				opaqueID = mapped
-				userType = userpb.UserType_USER_TYPE_PRIMARY
+			// Until the user driver has indexed the account, assume it is lightweight.
+			id := &userpb.UserId{
+				OpaqueId: acc.UserName,
+				Idp:      m.conf.IDProvider,
+				Type:     userpb.UserType_USER_TYPE_LIGHTWEIGHT,
+			}
+			if opaqueID, err := m.userCache.GetOpaqueIDByIAMUUID(ctx, acc.ID); err == nil {
+				if u, err := m.userCache.GetByID(ctx, opaqueID); err == nil {
+					id = u.Id
+				}
 			}
 
-			members = append(members, &userpb.UserId{
-				OpaqueId: opaqueID,
-				Idp:      m.conf.IDProvider,
-				Type:     userType,
-			})
+			members = append(members, id)
 		}
 
 		nextStart := startIndex + list.ItemsPerPage

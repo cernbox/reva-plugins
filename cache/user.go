@@ -196,9 +196,9 @@ func (c *UserCache) GetGroups(ctx context.Context, opaqueID string) ([]string, e
 	return groups, nil
 }
 
-// StoreIAMUUID records the two-way mapping between a remapped OpaqueId and the
-// IAM account UUID: GetIAMUUID for calls into the IAM API, GetOpaqueIDByIAMUUID
-// so the group driver reports the OpaqueId GetUser would. Remapped accounts only.
+// StoreIAMUUID records the two-way mapping between an OpaqueId and the IAM
+// account UUID: GetIAMUUID for calls into the IAM API, GetOpaqueIDByIAMUUID
+// for logins and so the group driver reports the OpaqueId GetUser would.
 func (c *UserCache) StoreIAMUUID(opaqueID, iamUUID string) error {
 	if err := store(c.pools, userIAMUUIDPrefix+strings.ToLower(opaqueID), iamUUID, c.userTTLSecs); err != nil {
 		return err
@@ -216,8 +216,8 @@ func (c *UserCache) GetIAMUUID(ctx context.Context, opaqueID string) (string, er
 	return uuid, nil
 }
 
-// GetOpaqueIDByIAMUUID resolves the public OpaqueId for an IAM account UUID. On
-// a miss, callers should treat the UUID as the OpaqueId (the non-remapped case).
+// GetOpaqueIDByIAMUUID resolves the public OpaqueId for an IAM account UUID. A
+// miss means the account is not indexed (yet).
 func (c *UserCache) GetOpaqueIDByIAMUUID(ctx context.Context, iamUUID string) (string, error) {
 	var opaqueID string
 	if err := fetch(ctx, c.pools, userOpaqueIDByIAMUUID+strings.ToLower(iamUUID), &opaqueID); err != nil {
