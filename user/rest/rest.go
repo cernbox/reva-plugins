@@ -413,7 +413,7 @@ func (m *manager) GetUserByClaim(ctx context.Context, claim, value string, skipF
 	// We do not want to support linked external accounts.
 	// These can be identified by having username equal to a CERN email.
 	if claim == "username" && strings.HasSuffix(value, "@cern.ch") {
-		return nil, fmt.Errorf("rest: linked external accounts are not supported")
+		return nil, errtypes.Conflict("rest: linked external accounts are not supported")
 	}
 
 	u, err := m.getCachedUserByClaim(ctx, claim, value)
