@@ -106,10 +106,10 @@ func New(ctx context.Context, m map[string]interface{}) (storage.FS, error) {
 	}
 
 	eosFs, err := eosfs.NewEOSFS(ctx, &c)
-	eos := eosFs.(*eosfs.Eosfs)
 	if err != nil {
 		return nil, err
 	}
+	eos := eosFs.(*eosfs.Eosfs)
 
 	mountIDTemplate, err := template.New("mountID").Funcs(sprig.TxtFuncMap()).Parse(t)
 	if err != nil {
