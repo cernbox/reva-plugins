@@ -22,7 +22,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path"
 	"strings"
@@ -38,7 +37,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/storage"
 	eosfs "github.com/cs3org/reva/v3/pkg/storage/fs/eos"
 	"github.com/cs3org/reva/v3/pkg/storage/fs/registry"
-	"github.com/cs3org/reva/v3/pkg/utils"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 )
 
@@ -50,16 +48,6 @@ func init() {
 const (
 	eosProjectsNamespace = "/eos/project"
 	eosHomesNamespace    = "/eos/user"
-
-	// We can use a regex for these, but that might have inferior performance.
-	projectSpaceGroupsPrefix       = "cernbox-project-"
-	projectSpaceAdminsGroupSuffix  = "-admins"
-	projectSpaceWritersGroupSuffix = "-writers"
-	projectSpaceReadersGroupSuffix = "-readers"
-
-	requireAdmin  = 2
-	requireWriter = 1
-	requireReader = 0
 
 	blockedDirectory = ".blocked"
 )
@@ -140,10 +128,6 @@ func (w *wrapper) GetMD(ctx context.Context, ref *provider.Reference, mdKeys []s
 	res.Id.StorageId = w.getMountID(ctx, res)
 	res.ParentId.StorageId = w.getMountID(ctx, res)
 
-	if err = w.setProjectSharingPermissions(ctx, res); err != nil {
-		return nil, err
-	}
-
 	if res.Id.SpaceId == "" {
 		log := appctx.GetLogger(ctx)
 		log.Error().Msgf("Space ID not set for stat to %s", res.Path)
@@ -160,7 +144,6 @@ func (w *wrapper) ListFolder(ctx context.Context, ref *provider.Reference, mdKey
 	for _, r := range res {
 		r.Id.StorageId = w.getMountID(ctx, r)
 		r.ParentId.StorageId = w.getMountID(ctx, r)
-		w.setProjectSharingPermissions(ctx, r)
 	}
 	return res, nil
 }
@@ -210,69 +193,8 @@ func (w *wrapper) getOldStyleQuota(ctx context.Context, ref *provider.Reference)
 	})
 }
 
-func (w *wrapper) ListRevisions(ctx context.Context, ref *provider.Reference) ([]*provider.FileVersion, error) {
-	if err := w.userIsProjectMember(ctx, ref, requireReader); err != nil {
-		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be accessed by project members")
-	}
-
-	return w.FSWithListRegexSupport.ListRevisions(ctx, ref)
-}
-
-func (w *wrapper) DownloadRevision(ctx context.Context, ref *provider.Reference, revisionKey string) (io.ReadCloser, error) {
-	if err := w.userIsProjectMember(ctx, ref, requireReader); err != nil {
-		return nil, errtypes.PermissionDenied("eosfs: files revisions can only be downloaded by project members")
-	}
-
-	return w.FSWithListRegexSupport.DownloadRevision(ctx, ref, revisionKey)
-}
-
-func (w *wrapper) RestoreRevision(ctx context.Context, ref *provider.Reference, revisionKey string) error {
-	if err := w.userIsProjectMember(ctx, ref, requireWriter); err != nil {
-		return errtypes.PermissionDenied("eosfs: files revisions can only be restored by project writers or admins")
-	}
-
-	return w.FSWithListRegexSupport.RestoreRevision(ctx, ref, revisionKey)
-}
-
-func (w *wrapper) AddGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
-	// AddGrant is only allowed for admins in a project space
-	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: add grant can only be done by project admins")
-		}
-	}
-
-	return w.FSWithListRegexSupport.AddGrant(ctx, ref, g)
-}
-
-func (w *wrapper) UpdateGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
-	// UpdateGrant is only allowed for admins in a project space
-	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
-		}
-	}
-
-	return w.FSWithListRegexSupport.UpdateGrant(ctx, ref, g)
-}
-
-func (w *wrapper) RemoveGrant(ctx context.Context, ref *provider.Reference, g *provider.Grant) error {
-	// RemoveGrant is only allowed for admins in a project space
-	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
-		}
-	}
-
-	return w.FSWithListRegexSupport.RemoveGrant(ctx, ref, g)
-}
-
 func (w *wrapper) DenyGrant(ctx context.Context, ref *provider.Reference, g *provider.Grantee) error {
-	// This is only allowed for project space admins
 	if w.isProjectInstance() {
-		if err := w.userIsProjectMember(ctx, ref, requireAdmin); err != nil {
-			return errtypes.PermissionDenied("eosfs: deny grant can only be set by project admins")
-		}
 		return w.FSWithListRegexSupport.DenyGrant(ctx, ref, g)
 	}
 
@@ -288,76 +210,6 @@ func (w *wrapper) getMountID(ctx context.Context, r *provider.ResourceInfo) stri
 		return ""
 	}
 	return b.String()
-}
-
-func (w *wrapper) setProjectSharingPermissions(ctx context.Context, r *provider.ResourceInfo) error {
-	// Check if this storage provider corresponds to a project spaces instance
-	// If this storage provider is not a project instance, we don't need to set anything
-	if !w.isProjectInstance() {
-		return nil
-	}
-
-	// Extract project name from the path resembling /c/cernbox or /c/cernbox/minutes/..
-	parts := strings.SplitN(r.Path, "/", 4)
-	if len(parts) != 4 && len(parts) != 3 {
-		// The request might be for / or /$letter
-		// Nothing to do in that case
-		return nil
-	}
-	adminGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminsGroupSuffix
-	user := appctx.ContextMustGetUser(ctx)
-
-	_, isPublicShare := utils.HasPublicShareRole(user)
-
-	for _, g := range user.Groups {
-		if g == adminGroup {
-			r.PermissionSet.AddGrant = true
-			r.PermissionSet.RemoveGrant = true
-			r.PermissionSet.UpdateGrant = true
-			r.PermissionSet.ListGrants = true
-			r.PermissionSet.GetQuota = true
-			if !isPublicShare {
-				r.PermissionSet.DenyGrant = true
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-func (w *wrapper) userIsProjectMember(ctx context.Context, ref *provider.Reference, requiredLevel int) error {
-	// Check if this storage provider corresponds to a project spaces instance
-	if !w.isProjectInstance() {
-		return nil
-	}
-
-	res, err := w.GetMD(ctx, ref, nil)
-	if err != nil {
-		return err
-	}
-
-	// Extract project name from the path resembling /c/cernbox or /c/cernbox/minutes/..
-	parts := strings.SplitN(res.Path, "/", 4)
-	if len(parts) != 4 && len(parts) != 3 {
-		// The request might be for / or /$letter
-		// Nothing to do in that case
-		return nil
-	}
-	// build group names (currently hardcoded)
-	adminsGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceAdminsGroupSuffix
-	writersGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceWritersGroupSuffix
-	readersGroup := projectSpaceGroupsPrefix + parts[2] + projectSpaceReadersGroupSuffix
-	user := appctx.ContextMustGetUser(ctx)
-
-	for _, g := range user.Groups {
-		if (g == adminsGroup && requiredLevel <= requireAdmin) ||
-			(g == writersGroup && requiredLevel <= requireWriter) ||
-			(g == readersGroup && requiredLevel <= requireReader) {
-			// User is a project member with sufficient permissions
-			return nil
-		}
-	}
-	return errtypes.PermissionDenied("")
 }
 
 func (w *wrapper) ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error) {
