@@ -36,19 +36,21 @@ import (
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
+	"github.com/cs3org/reva/v3/pkg/rhttp/router"
 	"github.com/cs3org/reva/v3/pkg/service"
 	"github.com/cs3org/reva/v3/pkg/sharedconf"
-	"github.com/go-chi/chi/v5"
 	"github.com/mitchellh/mapstructure"
 	"github.com/pkg/errors"
 )
+
+// mount is where the service is served.
+const mount = "/cback"
 
 func init() {
 	reva.RegisterPlugin(svc{})
 }
 
 type config struct {
-	Prefix            string `mapstructure:"prefix"`
 	Token             string `mapstructure:"token"`
 	URL               string `mapstructure:"url"`
 	Insecure          bool   `mapstructure:"insecure"`
@@ -61,7 +63,6 @@ type config struct {
 
 type svc struct {
 	config     *config
-	router     *chi.Mux
 	client     *cback.Client
 	tplStorage *template.Template
 	tplCback   *template.Template
@@ -95,10 +96,8 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		return nil, errors.Wrap(err, "cback: error creating template")
 	}
 
-	r := chi.NewRouter()
 	s := &svc{
 		config: c,
-		router: r,
 		client: cback.New(&cback.Config{
 			URL:     c.URL,
 			Token:   c.Token,
@@ -107,8 +106,6 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		tplStorage: tplStorage,
 		tplCback:   tplCback,
 	}
-
-	s.initRouter()
 
 	return s, nil
 }
@@ -119,9 +116,6 @@ func (s *svc) Close() error {
 }
 
 func (c *config) init() {
-	if c.Prefix == "" {
-		c.Prefix = "cback"
-	}
 	if c.TemplateToStorage == "" {
 		c.TemplateToStorage = "{{.}}"
 	}
@@ -131,20 +125,15 @@ func (c *config) init() {
 	c.GatewaySvc = sharedconf.GetGatewaySVC(c.GatewaySvc)
 }
 
-func (s *svc) Prefix() string {
-	return s.config.Prefix
-}
+// Routes declares the backup and restore endpoints.
+func (s *svc) Routes(r *router.Router) {
+	r.Group(mount, func(r *router.Router) {
+		r.Get("/restores", s.getRestores)
+		r.Get("/restores/{id}", s.getRestoreByID)
+		r.Post("/restores", s.createRestore)
 
-func (s *svc) Unprotected() []string {
-	return nil
-}
-
-func (s *svc) initRouter() {
-	s.router.Get("/restores", s.getRestores)
-	s.router.Get("/restores/{id}", s.getRestoreByID)
-	s.router.Post("/restores", s.createRestore)
-
-	s.router.Get("/backups", s.getBackups)
+		r.Get("/backups", s.getBackups)
+	})
 }
 
 type restoreOut struct {
@@ -274,7 +263,7 @@ func (s *svc) getRestoreByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
+	id := r.PathValue("id")
 	restoreID, err := strconv.ParseInt(id, 10, 32)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -323,10 +312,4 @@ func (s *svc) getBackups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, paths)
-}
-
-func (s *svc) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.router.ServeHTTP(w, r)
-	})
 }
