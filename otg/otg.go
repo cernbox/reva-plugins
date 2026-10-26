@@ -10,6 +10,7 @@ import (
 
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
+	"github.com/cs3org/reva/v3/pkg/invoke"
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 )
@@ -28,7 +29,7 @@ type config struct {
 }
 
 // New returns a new otg service
-func New(ctx context.Context, m map[string]interface{}) (global.Service, error) {
+func New(ctx context.Context, m map[string]any) (global.Service, error) {
 	var c config
 	if err := cfg.Decode(m, &c); err != nil {
 		return nil, err
@@ -39,7 +40,9 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		return nil, err
 	}
 
-	return &Otg{conf: &c, db: db}, nil
+	s := &Otg{conf: &c, db: db}
+	s.registerInvocations()
+	return s, nil
 }
 
 // Close performs cleanup.
@@ -56,6 +59,7 @@ func (c *config) ApplyDefaults() {
 // Otg is an HTTP service that
 // expose an otg to the user.
 type Otg struct {
+	*invoke.Set
 	conf *config
 	db   *sql.DB
 }
