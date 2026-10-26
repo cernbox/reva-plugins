@@ -7,29 +7,37 @@ on:
   pull_request:
     branches:
       - master
+  # Find a change in reva master that breaks the plugins, also when no one pushes here.
+  schedule:
+    - cron: '0 5 * * *'
 
 jobs:
   test:
-    name: test
+    name: test (reva ${{ matrix.reva }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # "required" is the version in go.mod; "master" is reva master through a go.work.
+        reva: [required, master]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-            go-version: '1.22'
-            cache: true
-     # Cloning outside of workspace is currently not possible, see https://github.com/actions/checkout/issues/197
-     # Therefore, we move later 
-     # (we need ../reva available due to a replace in the go.mod file)
-      - name: Cloning reva
+          go-version-file: go.mod
+          cache: true
+      - name: Clone reva master
+        if: matrix.reva == 'master'
         uses: actions/checkout@v4
         with:
           repository: cs3org/reva
-          path: reva
-      - run: mv reva ../reva
-      - name: Go mod tidy
-        run: go mod tidy
-      - name: Install dependencies
-        run: go get .
-      - name: Test with the Go CLI
+          path: .reva
+      - name: Use reva master
+        if: matrix.reva == 'master'
+        run: go work init . ./.reva
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test
         run: go test -v ./...
