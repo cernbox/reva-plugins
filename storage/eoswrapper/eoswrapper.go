@@ -174,8 +174,7 @@ func (w *wrapper) GetQuota(ctx context.Context, ref *provider.Reference) (totalb
 	if !ok {
 		return 0, 0, errors.New("no user found in context")
 	}
-	gidctx := ctx
-	appctx.ContextSetUser(gidctx, &userpb.User{
+	gidctx := appctx.ContextSetUser(ctx, &userpb.User{
 		Id:        user.Id,
 		UidNumber: user.UidNumber,
 		GidNumber: 99,
