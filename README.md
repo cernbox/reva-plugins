@@ -10,6 +10,7 @@ Here is a list of plugins currently available in this repository:
 * otg: An HTTP service exposing an OTG message (deprecated).
 * cback: An HTTP service and a storage provider to access and restore CERNBox backups.
 * rest: A REDIS-based cache for users and groups.
+* projects/cernbox: The projects catalogue of the spacesregistry, with the CERN columns.
 
 For more information about each plugin, please refer to the respective plugin's README file in the `<plugin>/` directory.
 

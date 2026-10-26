@@ -7,6 +7,7 @@ import (
 	_ "github.com/cernbox/reva-plugins/group/indigoiam"
 	_ "github.com/cernbox/reva-plugins/group/rest"
 	_ "github.com/cernbox/reva-plugins/otg"
+	_ "github.com/cernbox/reva-plugins/projects/cernbox"
 	_ "github.com/cernbox/reva-plugins/storage/eoswrapper"
 	_ "github.com/cernbox/reva-plugins/thumbnails"
 	_ "github.com/cernbox/reva-plugins/user/indigoiam"

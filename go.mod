@@ -15,6 +15,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/rs/zerolog v1.35.1
 	google.golang.org/grpc v1.84.0
+	gorm.io/gorm v1.31.0
 )
 
 require (
@@ -83,5 +84,4 @@ require (
 	gopkg.in/mail.v2 v2.3.1 // indirect
 	gorm.io/datatypes v1.2.7 // indirect
 	gorm.io/driver/mysql v1.6.0 // indirect
-	gorm.io/gorm v1.31.0 // indirect
 )
