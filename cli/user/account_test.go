@@ -29,21 +29,10 @@ import (
 	"github.com/cernbox/reva-plugins/cli/internal/fakeadmin"
 	_ "github.com/cernbox/reva-plugins/cli/user"
 	"github.com/cernbox/reva-plugins/user/rest/api"
-	revacmd "github.com/cs3org/reva/v3/cmd/reva/app"
 	"github.com/cs3org/reva/v3/pkg/admin/adminpb"
-	"github.com/cs3org/reva/v3/pkg/cli"
-	"github.com/spf13/cobra"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
-
-// TODO(T31): remove the stand-in when reva has the core command `user`.
-func TestMain(m *testing.M) {
-	if c, _, err := revacmd.NewRoot().Find([]string{"user"}); err != nil || c.Name() != "user" {
-		cli.RegisterCommand("user", func(*cli.Runtime) *cobra.Command { return &cobra.Command{Use: "user"} })
-	}
-	m.Run()
-}
 
 var service = &api.Account{
 	Username:         "svc-backup",

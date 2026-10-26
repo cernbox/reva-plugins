@@ -20,7 +20,6 @@ package cli_test
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"testing"
 
@@ -32,26 +31,9 @@ import (
 // A defect of a plugin (a collision, a missing parent) only gives a warning
 // when the CLI starts, so this test is what fails the build.
 func TestCheckPlugins(t *testing.T) {
-	root := revacmd.NewRoot()
-	err := revacmd.CheckPlugins(root)
-	if err == nil {
-		return
+	if err := revacmd.CheckPlugins(revacmd.NewRoot()); err != nil {
+		t.Fatal(err)
 	}
-	// TODO(T31): remove this when reva has the core command `user`.
-	const noUser = "plugin cli.commands.user.account refused: no parent command `user`"
-	if c, _, _ := root.Find([]string{"user"}); c == root {
-		var other []error
-		for l := range strings.SplitSeq(err.Error(), "\n") {
-			if l != noUser {
-				other = append(other, errors.New(l))
-			}
-		}
-		if len(other) == 0 {
-			t.Skip("user account needs the core command `user` of reva (T31)")
-		}
-		err = errors.Join(other...)
-	}
-	t.Fatal(err)
 }
 
 func TestVersionListsThePlugins(t *testing.T) {
