@@ -42,10 +42,9 @@ import (
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
 	"github.com/cs3org/reva/v3/pkg/httpclient"
-	"github.com/cs3org/reva/v3/pkg/rgrpc/todo/pool"
 	"github.com/cs3org/reva/v3/pkg/rhttp/global"
 	"github.com/cs3org/reva/v3/pkg/rhttp/router"
-	"github.com/cs3org/reva/v3/pkg/sharedconf"
+	"github.com/cs3org/reva/v3/pkg/service"
 	"github.com/cs3org/reva/v3/pkg/spaces"
 	"github.com/cs3org/reva/v3/pkg/storage/utils/downloader"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
@@ -66,7 +65,6 @@ const (
 )
 
 type config struct {
-	GatewaySVC       string                            `mapstructure:"gateway_svc"`
 	Quality          int                               `mapstructure:"quality"`
 	FixedResolutions []string                          `mapstructure:"fixed_resolutions"`
 	Cache            string                            `mapstructure:"cache"`
@@ -81,7 +79,6 @@ type config struct {
 type Thumbnails struct {
 	c         *config
 	log       *zerolog.Logger
-	client    gateway.GatewayAPIClient
 	thumbnail *manager.Thumbnail
 }
 
@@ -95,7 +92,6 @@ func (c *config) ApplyDefaults() {
 	if c.OutputType == "jpg" && c.Quality == 0 {
 		c.Quality = 80
 	}
-	c.GatewaySVC = sharedconf.GetGatewaySVC(c.GatewaySVC)
 }
 
 func (Thumbnails) RevaPlugin() reva.PluginInfo {
@@ -112,17 +108,12 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		return nil, err
 	}
 
-	gtw, err := pool.GetGatewayServiceClient(pool.Endpoint(c.GatewaySVC))
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting gateway client")
-	}
-
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
 	client := httpclient.New(httpclient.RoundTripper(tr))
-	d := downloader.NewDownloader(gtw, client)
+	d := gatewayDownloader{client: client}
 
 	log := appctx.GetLogger(ctx)
 	mgr, err := manager.NewThumbnail(d, &manager.Config{
@@ -139,10 +130,23 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 		c:         &c,
 		log:       log,
 		thumbnail: mgr,
-		client:    gtw,
 	}
 
 	return s, nil
+}
+
+// gatewayDownloader resolves the gateway on each download, because the gateway
+// may not be registered yet when the service starts.
+type gatewayDownloader struct {
+	client *httpclient.Client
+}
+
+func (d gatewayDownloader) Download(ctx context.Context, path, versionKey string) (io.ReadCloser, error) {
+	gtw, err := service.Gateway(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return downloader.NewDownloader(gtw, d.client).Download(ctx, path, versionKey)
 }
 
 func (s *Thumbnails) Handler() http.Handler {
@@ -248,7 +252,13 @@ func (s *Thumbnails) davPublicContext(next http.Handler) http.Handler {
 			}
 		}
 
-		rsp, err := s.client.Authenticate(ctx, authReq)
+		gtw, err := service.Gateway(ctx)
+		if err != nil {
+			s.writeHTTPError(w, err)
+			return
+		}
+
+		rsp, err := gtw.Authenticate(ctx, authReq)
 		if err != nil {
 			s.writeHTTPError(w, err)
 			return
@@ -274,7 +284,12 @@ func (s *Thumbnails) davPublicContext(next http.Handler) http.Handler {
 }
 
 func (s *Thumbnails) statPublicFile(ctx context.Context, token, path string, sign bool, auth *share.PublicShareAuthentication) (*provider.ResourceInfo, error) {
-	resp, err := s.client.GetPublicShareByToken(ctx, &share.GetPublicShareByTokenRequest{
+	gtw, err := service.Gateway(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := gtw.GetPublicShareByToken(ctx, &share.GetPublicShareByTokenRequest{
 		Token:          token,
 		Sign:           sign,
 		Authentication: auth,
@@ -310,7 +325,12 @@ func (s *Thumbnails) statPublicFile(ctx context.Context, token, path string, sig
 }
 
 func (s *Thumbnails) statRes(ctx context.Context, ref *provider.Reference) (*provider.ResourceInfo, error) {
-	resp, err := s.client.Stat(ctx, &provider.StatRequest{
+	gtw, err := service.Gateway(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := gtw.Stat(ctx, &provider.StatRequest{
 		Ref: ref,
 	})
 	switch {
