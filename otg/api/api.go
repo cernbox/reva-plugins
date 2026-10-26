@@ -13,6 +13,12 @@ const (
 	Clear = "clear"
 )
 
+// The arguments of the set invocation, as the keys of SetArgs.
+const (
+	ArgNumber  = "number"
+	ArgMessage = "message"
+)
+
 // SetArgs are the arguments of the set invocation.
 type SetArgs struct {
 	Number  string `arg:"number,required" help:"the OTG number from the CERN SSB, e.g. OTG0060602"`

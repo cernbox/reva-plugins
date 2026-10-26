@@ -54,7 +54,8 @@ func TestCatalogue(t *testing.T) {
 			t.Errorf("%s: kind %q scope %q", spec.Name, spec.Kind, spec.Scope)
 		}
 		if spec.Name == api.Set {
-			if len(spec.Args) != 2 || !spec.Args[0].Required || !spec.Args[1].Required {
+			if len(spec.Args) != 2 || !spec.Args[0].Required || !spec.Args[1].Required ||
+				spec.Args[0].Name != api.ArgNumber || spec.Args[1].Name != api.ArgMessage {
 				t.Errorf("set args: %+v", spec.Args)
 			}
 		}
