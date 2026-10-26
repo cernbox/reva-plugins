@@ -66,6 +66,8 @@ const (
 
 type FSWithListRegexSupport interface {
 	storage.FS
+	// QuotaAdmin lets the Admin API read and set quotas through the wrapper.
+	storage.QuotaAdmin
 	ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error)
 }
 
