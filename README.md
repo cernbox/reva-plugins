@@ -14,6 +14,19 @@ Here is a list of plugins currently available in this repository:
 
 For more information about each plugin, please refer to the respective plugin's README file in the `<plugin>/` directory.
 
+## CLI plugins
+
+The `cernbox` build of the reva CLI adds commands from the packages in `cli/`. They call the invocations of the
+backend plugins through the Admin API:
+
+* `cernbox otg get|set|clear`: the `otg` invocations.
+* `cernbox user account <user>`: the `driver.account` invocation of the userprovider (`user/rest`).
+
+The package `github.com/cernbox/reva-plugins/cli` imports only the CLI plugins, and the root package only the
+backend plugins, so that revad and the CLI each link only their own plugins. A plugin that the CLI refuses (for
+example, a name that a core command has) only gives a warning when the CLI starts. The test of `cli` runs
+`revacmd.CheckPlugins`, so that such a defect fails CI.
+
 ## Development
 
 `go.mod` requires a released version of reva. To build against a local reva checkout, use a Go workspace. Do not

@@ -1,0 +1,33 @@
+// Copyright 2018-2026 CERN
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// In applying this license, CERN does not waive the privileges and immunities
+// granted to it by virtue of its status as an Intergovernmental Organization
+// or submit itself to any jurisdiction.
+
+package cernbox_test
+
+import (
+	"testing"
+
+	_ "github.com/cernbox/reva-plugins"
+	"github.com/cs3org/reva/v3"
+)
+
+// revad must not link the CLI plugins: they belong to the cli package.
+func TestNoCLIPlugins(t *testing.T) {
+	if p := reva.GetPlugins("cli"); len(p) > 0 {
+		t.Errorf("revad links the CLI plugins %v", p)
+	}
+}
