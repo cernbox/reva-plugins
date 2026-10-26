@@ -37,6 +37,7 @@ import (
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	revautils "github.com/cs3org/reva/v3/pkg/cbox/utils"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/invoke"
 	"github.com/cs3org/reva/v3/pkg/user"
 	"github.com/cs3org/reva/v3/pkg/utils/cfg"
 	"github.com/cs3org/reva/v3/pkg/utils/list"
@@ -50,6 +51,7 @@ type manager struct {
 	conf            *config
 	cache           *cache.UserCache
 	apiTokenManager *revautils.APITokenManager
+	invocations     *invoke.Set
 }
 
 func (manager) RevaPlugin() reva.PluginInfo {
@@ -149,6 +151,7 @@ func (m *manager) Configure(ml map[string]interface{}, ctx context.Context) erro
 	m.conf = &c
 	m.cache = cache.NewUserCache(pools, c.UserFetchInterval, c.UserGroupsCacheExpiration)
 	m.apiTokenManager = apiTokenManager
+	m.registerInvocations()
 
 	// Since we're starting a subroutine which would take some time to execute,
 	// we can't wait to see if it works before returning the user.Manager object
