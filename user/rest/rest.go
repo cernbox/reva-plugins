@@ -196,6 +196,7 @@ type Identity struct {
 	ActiveUser          bool   `json:"activeUser,omitempty"`
 	UID                 int    `json:"uid,omitempty"`
 	GID                 int    `json:"gid,omitempty"`
+	InternalState       string `json:"internalState,omitempty"`
 }
 
 // IdentitiesResponse contains the expected response from grappa
@@ -217,20 +218,20 @@ func (i *Identity) UserType() userpb.UserType {
 	case "Secondary":
 		return userpb.UserType_USER_TYPE_SECONDARY
 	case "Person":
-		if i.Source == "cern" && i.UID > 0 {
-			// this is a CERN account; here we should check if i.ActiveUser = true,
-			// but users that have just left the Organization have ActiveUser = false,
-			// whereas users with UID = 0 are definitely non-primary.
+		if i.Source == "cern" && (i.InternalState == "Active" || i.InternalState == "GracePeriod") {
+			// this is a CERN account of an active user. Users beyond the grace period may have a linked
+			// account but in that case they are to be considered external.
 			return userpb.UserType_USER_TYPE_PRIMARY
 		}
-		return userpb.UserType_USER_TYPE_LIGHTWEIGHT // external user
+		// external user: either from external IdPs or linked accounts beyond grace period
+		return userpb.UserType_USER_TYPE_LIGHTWEIGHT
 	default:
 		return userpb.UserType_USER_TYPE_INVALID
 	}
 }
 
 func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1.0/Identity?filter=unconfirmed%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser", m.conf.APIBaseURL)
+	url := fmt.Sprintf("%s/api/v1.0/Identity?filter=unconfirmed%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser&field=internalState", m.conf.APIBaseURL)
 
 	for {
 		var r IdentitiesResponse
@@ -259,7 +260,7 @@ func (m *manager) fetchExternalUserByEmail(ctx context.Context, email string) (*
 	}
 
 	log := appctx.GetLogger(ctx)
-	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=type&field=source&field=activeUser", m.conf.APIBaseURL, neturl.PathEscape(email))
+	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=type&field=source&field=activeUser&field=internalState", m.conf.APIBaseURL, neturl.PathEscape(email))
 
 	var r IdentitiesResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
@@ -302,6 +303,8 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 	if i.UserType() == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
 		if i.PrimaryAccountEmail != "" {
 			u.Id.OpaqueId = i.PrimaryAccountEmail
+			u.UidNumber = 0
+			u.GidNumber = 0
 		} else {
 			return nil, errors.New("Cannot parse a lightweight user without an associated email")
 		}
