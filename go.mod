@@ -8,6 +8,7 @@ require (
 	github.com/cs3org/go-cs3apis v0.0.0-20260915133204-93f9871a72ef
 	github.com/cs3org/reva/v3 v3.14.0
 	github.com/disintegration/imaging v1.6.2
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/gomodule/redigo v1.9.3
 	github.com/mattn/go-sqlite3 v1.14.52

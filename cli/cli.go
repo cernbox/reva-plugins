@@ -26,6 +26,8 @@ import (
 	// Add here all the CLI plugins of cernbox.
 	_ "github.com/cernbox/reva-plugins/cli/auth/cernsso"
 	_ "github.com/cernbox/reva-plugins/cli/clipboard"
+	_ "github.com/cernbox/reva-plugins/cli/inbox"
 	_ "github.com/cernbox/reva-plugins/cli/otg"
+	_ "github.com/cernbox/reva-plugins/cli/outbox"
 	_ "github.com/cernbox/reva-plugins/cli/user"
 )

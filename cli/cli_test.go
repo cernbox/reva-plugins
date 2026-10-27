@@ -96,6 +96,8 @@ func TestVersionListsThePlugins(t *testing.T) {
 	for _, want := range []string{
 		"cli.auth.cern-sso", "github.com/cernbox/reva-plugins/cli/auth/cernsso",
 		"cli.commands.clipboard", "cli.commands.copy", "cli.commands.paste", "github.com/cernbox/reva-plugins/cli/clipboard",
+		"cli.commands.inbox", "github.com/cernbox/reva-plugins/cli/inbox",
+		"cli.commands.outbox", "github.com/cernbox/reva-plugins/cli/outbox",
 		"cli.commands.otg", "github.com/cernbox/reva-plugins/cli/otg",
 		"cli.commands.user.account", "github.com/cernbox/reva-plugins/cli/user",
 	} {

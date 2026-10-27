@@ -27,6 +27,9 @@ HTTPS:
 
 * `cernbox copy|paste` and `cernbox clipboard list|clear` (`cli/clipboard`): the clipboard across machines and
   people, kept in the home space.
+* `cernbox inbox pull|watch|status` (`cli/inbox`) and `cernbox outbox push|watch|status` (`cli/outbox`): a
+  CERNBox folder whose arrivals come down, and a local folder whose arrivals go up. The folders are
+  `[plugins.inbox] folders` and `[plugins.outbox] folders` of the config files.
 
 `cli/auth/cernsso` adds the sign-in method `cern-sso`: the Kerberos ticket of kinit signs in to CERN SSO, which
 issues an OIDC token. It comes after `kerberos` in the chain of the brand.

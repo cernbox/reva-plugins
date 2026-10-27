@@ -24,6 +24,7 @@ package plugintest
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/cs3org/reva/v3/pkg/cli"
+	"github.com/cs3org/reva/v3/pkg/cli/backend"
 	"github.com/cs3org/reva/v3/pkg/cli/brand"
 	"github.com/cs3org/reva/v3/pkg/cli/clitest"
 	"github.com/spf13/cobra"
@@ -42,6 +44,8 @@ var testBrand = brand.MustParse([]byte("[program]\nname = \"cernbox\"\n"))
 // Env is a home and a config dir of their own, and a fake server.
 type Env struct {
 	B *clitest.Backend
+	// D is the data plane, B.Data() unless a test replaces it.
+	D backend.DataPlane
 	// Config is the user config file.
 	Config string
 	cmds   []func(*cli.Runtime) *cobra.Command
@@ -55,7 +59,8 @@ func New(t *testing.T, user string, cmds ...func(*cli.Runtime) *cobra.Command) *
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	cobra.EnableTraverseRunHooks = true
-	return &Env{B: clitest.New(user), Config: filepath.Join(cfg, "cernbox", "config.toml"), cmds: cmds}
+	b := clitest.New(user)
+	return &Env{B: b, D: b.Data(), Config: filepath.Join(cfg, "cernbox", "config.toml"), cmds: cmds}
 }
 
 // WriteConfig writes the user config.
@@ -86,13 +91,22 @@ func (e *Env) Run(t *testing.T, in io.Reader, args ...string) (Result, error) {
 func (e *Env) Start(t *testing.T, in io.Reader, args ...string) func() (Result, error) {
 	t.Helper()
 	rt := cli.NewRuntime(testBrand)
-	rt.UseBackend(e.B, e.B.Data())
+	rt.UseBackend(e.B, e.D)
 	root := &cobra.Command{
 		Use:           "cernbox",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return rt.Load(cmd.Flags())
+			if err := rt.Load(cmd.Flags()); err != nil {
+				return err
+			}
+			// As the root of the core does for --timeout.
+			if rt.Timeout() > 0 {
+				ctx, cancel := context.WithTimeout(cmd.Context(), rt.Timeout())
+				cobra.OnFinalize(cancel)
+				cmd.SetContext(ctx)
+			}
+			return nil
 		},
 	}
 	rt.AddFlags(root.PersistentFlags())
