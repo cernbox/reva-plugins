@@ -20,13 +20,60 @@ package cli_test
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
 	_ "github.com/cernbox/reva-plugins/cli"
 	"github.com/cs3org/reva/v3"
 	revacmd "github.com/cs3org/reva/v3/cmd/reva/app"
+	"github.com/cs3org/reva/v3/pkg/cli/brand"
 )
+
+// cernboxBrand is the brand that gaia embeds in the cernbox build.
+func cernboxBrand(t *testing.T) *brand.Brand {
+	t.Helper()
+	data, err := os.ReadFile("cernbox.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := brand.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// gaia runs the same check before it builds, but only this test sees the
+// brand together with the plugins on every change of either.
+func TestBrand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := revacmd.CheckBrand(cernboxBrand(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBrandHelp(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	b := cernboxBrand(t)
+	root := revacmd.NewRoot(revacmd.WithBrand(b))
+	if err := revacmd.CheckPlugins(root); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"cernbox", b.Program.Short, b.Program.DocsURL, b.Program.SupportURL} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in the help:\n%s", want, out.String())
+		}
+	}
+}
 
 // A defect of a plugin (a collision, a missing parent) only gives a warning
 // when the CLI starts, so this test is what fails the build.

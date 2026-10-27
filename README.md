@@ -25,6 +25,10 @@ backend plugins through the Admin API:
 `cli/auth/cernsso` adds the sign-in method `cern-sso`: the Kerberos ticket of kinit signs in to CERN SSO, which
 issues an OIDC token. It comes after `kerberos` in the chain of the brand.
 
+`cli/cernbox.toml` is the brand of the build: the name, the CERNBox endpoint, the sign-in chain, the env names of
+cernbox-cli and the texts. gaia embeds it with `--brand`, and the test of `cli` checks it with `revacmd.CheckBrand`
+against the plugins of this module.
+
 The package `github.com/cernbox/reva-plugins/cli` imports only the CLI plugins, and the root package only the
 backend plugins, so that revad and the CLI each link only their own plugins. A plugin that the CLI refuses (for
 example, a name that a core command has) only gives a warning when the CLI starts. The test of `cli` runs
