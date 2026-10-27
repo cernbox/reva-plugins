@@ -30,7 +30,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/cli/brand"
 )
 
-// cernboxBrand is the brand that gaia embeds in the cernbox build.
 func cernboxBrand(t *testing.T) *brand.Brand {
 	t.Helper()
 	data, err := os.ReadFile("cernbox.toml")
@@ -44,8 +43,6 @@ func cernboxBrand(t *testing.T) *brand.Brand {
 	return b
 }
 
-// gaia runs the same check before it builds, but only this test sees the
-// brand together with the plugins on every change of either.
 func TestBrand(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -75,8 +72,7 @@ func TestBrandHelp(t *testing.T) {
 	}
 }
 
-// A defect of a plugin (a collision, a missing parent) only gives a warning
-// when the CLI starts, so this test is what fails the build.
+// A defect of a plugin only gives a warning when the CLI starts.
 func TestCheckPlugins(t *testing.T) {
 	if err := revacmd.CheckPlugins(revacmd.NewRoot()); err != nil {
 		t.Fatal(err)
@@ -107,7 +103,6 @@ func TestVersionListsThePlugins(t *testing.T) {
 	}
 }
 
-// The CLI must not link the backend plugins.
 func TestOnlyCLIPlugins(t *testing.T) {
 	for _, p := range reva.GetPlugins("") {
 		if !strings.HasPrefix(string(p.ID), "cli.") {

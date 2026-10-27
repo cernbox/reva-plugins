@@ -61,9 +61,8 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestNoExpiryIsOmitted: --ttl 0 means "keep it until I clear it", and a zero
-// timestamp serialised as "0001-01-01T00:00:00Z" reads like a date in the past,
-// which is exactly the thing that would make a collector delete it.
+// A zero expiry must not be written as a date in the past, or a collector
+// would delete the slot.
 func TestNoExpiryIsOmitted(t *testing.T) {
 	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	m := NewManifest("default", now, 0, Origin{})
@@ -96,8 +95,6 @@ func TestExpired(t *testing.T) {
 	}
 }
 
-// TestDecodeRefusesANewerFormat: the fields a newer CLI added could be the ones
-// saying where the bytes are, so a partial read is worse than an honest refusal.
 func TestDecodeRefusesANewerFormat(t *testing.T) {
 	_, err := Decode([]byte(`{"version":99,"slot":"default","entries":[]}`))
 	if err == nil {
@@ -133,7 +130,6 @@ func TestSizes(t *testing.T) {
 	if got := m.Size(); got != 300 {
 		t.Errorf("Size = %d, want 300", got)
 	}
-	// Only the staged half is quota the CLI is responsible for.
 	if got := m.StagedSize(); got != 100 {
 		t.Errorf("StagedSize = %d, want 100", got)
 	}
@@ -150,19 +146,6 @@ func TestSizes(t *testing.T) {
 	}
 }
 
-func TestFind(t *testing.T) {
-	m := &Manifest{Entries: []Entry{{Name: "a", Path: "/a"}}}
-	if _, ok := m.Find("a"); !ok {
-		t.Error("should have found a")
-	}
-	if _, ok := m.Find("b"); ok {
-		t.Error("should not have found b")
-	}
-}
-
-// TestValidateSlot: a slot name becomes a directory under the clipboard root, so
-// anything that could climb out of it has to be refused here: this is the only
-// place it is checked.
 func TestValidateSlot(t *testing.T) {
 	good := []string{"default", "logs", "build-2026", "a.b_c", "X"}
 	for _, name := range good {
@@ -191,14 +174,9 @@ func TestLayout(t *testing.T) {
 	if got, want := PayloadDir(root, "logs"), root+"/logs/payload"; got != want {
 		t.Errorf("PayloadDir = %q, want %q", got, want)
 	}
-	if !IsManifest("manifest.json") || IsManifest("payload") {
-		t.Error("IsManifest does not distinguish metadata from payload")
-	}
 }
 
 func TestLocalOrigin(t *testing.T) {
-	// Every field is best effort, so the only contract is that it does not fail
-	// and that the working directory is carried through.
 	o := LocalOrigin("/tmp/work")
 	if o.Dir != "/tmp/work" {
 		t.Errorf("Dir = %q", o.Dir)
@@ -228,15 +206,12 @@ func TestOriginString(t *testing.T) {
 func TestManifestReaderPathDependsOnWhoTheReceiverIs(t *testing.T) {
 	const root = "/eos/user/e/einstein/.cernbox/clipboard"
 
-	// Another of your own machines can write anywhere in the slot.
 	own := NewManifest("default", time.Now(), 0, Origin{})
 	own.Mode = ModeStream
 	if got, want := own.ReaderPath(root), root+"/default/reader"; got != want {
 		t.Errorf("own machine's marker at %q, want %q", got, want)
 	}
 
-	// Somebody else can only write in the pieces directory, because that is all a
-	// handover shares with them.
 	handover := NewManifest("to-marie", time.Now(), 0, Origin{})
 	handover.Mode = ModeStream
 	handover.To = "marie"
@@ -244,7 +219,6 @@ func TestManifestReaderPathDependsOnWhoTheReceiverIs(t *testing.T) {
 		t.Errorf("recipient's marker at %q, want %q", got, want)
 	}
 
-	// The marker must not be mistaken for a piece, whichever directory it is in.
 	if _, ok := ChunkIndex("reader"); ok {
 		t.Error("the arrival marker parses as a piece number")
 	}

@@ -69,7 +69,6 @@ func TestPushUploadsWhatIsWaiting(t *testing.T) {
 	if !strings.Contains(r.Stderr, "Uploaded 2 files") {
 		t.Errorf("stderr %q", r.Stderr)
 	}
-	// keep is the default.
 	if !exists(filepath.Join(dir, "a.png")) {
 		t.Error("the local file is gone with the default policy")
 	}
@@ -259,7 +258,6 @@ func TestWatchUploadsOnArrival(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	// What was there before the watch goes first, since nothing announced it.
 	waitFor("before.png")
 	write(t, filepath.Join(dir, "after.png"), "2")
 	waitFor("after.png")

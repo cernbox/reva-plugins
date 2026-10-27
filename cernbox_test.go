@@ -25,7 +25,6 @@ import (
 	"github.com/cs3org/reva/v3"
 )
 
-// revad must not link the CLI plugins: they belong to the cli package.
 func TestNoCLIPlugins(t *testing.T) {
 	if p := reva.GetPlugins("cli"); len(p) > 0 {
 		t.Errorf("revad links the CLI plugins %v", p)

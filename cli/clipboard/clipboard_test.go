@@ -109,7 +109,6 @@ func TestCopyAndPasteRoundTrip(t *testing.T) {
 	if got := readLocal(t, filepath.Join(dest, "a.txt")); got != "alpha" {
 		t.Errorf("pasted %q", got)
 	}
-	// Paste leaves the clipboard alone, and says so.
 	if !strings.Contains(r.Stderr, "Still on the clipboard") {
 		t.Errorf("stderr %q, want the slot to survive", r.Stderr)
 	}
@@ -179,8 +178,6 @@ func TestCopyReplacesTheSlotAndReleasesThePayload(t *testing.T) {
 	}
 }
 
-// Another machine replaced the manifest after this one read its etag: the
-// write must fail and name the race, not orphan the other copy.
 func TestCopyDetectsAConcurrentCopy(t *testing.T) {
 	e := newEnv(t)
 	e.Must(t, "copy", localFile(t, "a.txt", "1"))
@@ -278,8 +275,6 @@ func TestCopyStdinAndPasteStdout(t *testing.T) {
 	}
 }
 
-// A pipe longer than a chunk goes in pieces of known length, and paste
-// joins them, to a file, to stdout and to CERNBox.
 func TestCopyStreamsALargeStdinInPieces(t *testing.T) {
 	e := newEnv(t)
 	e.WriteConfig(t, "[transfer]\nchunk_size = \"4\"\n")
@@ -305,7 +300,6 @@ func TestCopyStreamsALargeStdinInPieces(t *testing.T) {
 	if got := e.Content(t, "/joined.txt"); got != "0123456789" {
 		t.Errorf("remote %q", got)
 	}
-	// One clear releases every piece.
 	e.Must(t, "clipboard", "clear")
 	if _, ok := e.B.Content(PartPath(en.Path, 0)); ok {
 		t.Error("a piece survived the clear")
@@ -379,8 +373,7 @@ func TestCopyJSONEmitsTheManifest(t *testing.T) {
 	}
 }
 
-// The handover to oneself goes through the same share as to somebody else:
-// the received share names the slot by its resource id.
+// A handover to oneself uses the same share as one to somebody else.
 func TestHandover(t *testing.T) {
 	e := newEnv(t)
 	e.B.AddFile("/docs/report.txt", []byte("for you"))
@@ -390,8 +383,6 @@ func TestHandover(t *testing.T) {
 	}
 	slot := HandoverSlot("alice")
 	m := manifestOf(t, e, slot)
-	// A handover stages also a CERNBox path: the recipient cannot read the
-	// path of the sender.
 	if !m.Entries[0].Staged || !strings.HasPrefix(m.Entries[0].Path, PayloadDir(root, slot)) || m.To != "alice" {
 		t.Fatalf("manifest %+v, want the file staged in the slot", m)
 	}
@@ -403,7 +394,6 @@ func TestHandover(t *testing.T) {
 	if len(shares) != 1 || !sharedWith(shares[0], "alice") {
 		t.Fatalf("shares %v, want one with alice on the slot", shares)
 	}
-	// A second copy reuses the share.
 	e.Must(t, "copy", "--to", "alice", "cb:/docs/report.txt")
 	if shares, _ := e.B.Shares().List(t.Context(), info.Id); len(shares) != 1 {
 		t.Errorf("%d shares after a second copy, want 1", len(shares))
@@ -429,7 +419,6 @@ func TestHandover(t *testing.T) {
 		t.Errorf("stderr %q", r.Stderr)
 	}
 
-	// Clear takes the grant back before the slot goes.
 	e.Must(t, "clipboard", "clear", slot)
 	if shares, _ := e.B.Shares().List(t.Context(), info.Id); len(shares) != 0 {
 		t.Errorf("shares %v after clear, want none", shares)
@@ -451,7 +440,6 @@ func TestStreamHandsOverLive(t *testing.T) {
 		r, err := send()
 		sent <- result{r, err}
 	}()
-	// The receiver needs the manifest of the sender.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if _, ok := e.B.Content(ManifestPath(root, DefaultSlot)); ok {
@@ -476,7 +464,6 @@ func TestStreamHandsOverLive(t *testing.T) {
 	if !strings.Contains(s.r.Stderr, "Nothing was stored") {
 		t.Errorf("sender stderr %q", s.r.Stderr)
 	}
-	// The sender tears the slot down.
 	if _, ok := e.B.Content(ManifestPath(root, DefaultSlot)); ok {
 		t.Error("the stream slot is still there")
 	}

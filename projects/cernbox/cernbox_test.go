@@ -44,17 +44,6 @@ func setInfo(t *testing.T, c *Catalogue, args map[string]any) map[string]any {
 	return extra
 }
 
-var cernArgs = map[string]any{
-	"name":                      "alpha",
-	"service_account":           "svc-alpha",
-	"snow_ticket":               "RQF0000001",
-	"backup_name":               "alpha-x1y2",
-	"initial_capacity_bytes":    "1000000000000",
-	"user_provided_description": "data of the alpha experiment",
-	"comments":                  "moved from AFS",
-	"resource_admins":           "alpha-admins",
-}
-
 var cernExtra = map[string]string{
 	"service_account":           "svc-alpha",
 	"snow_ticket":               "RQF0000001",
@@ -64,6 +53,14 @@ var cernExtra = map[string]string{
 	"comments":                  "moved from AFS",
 	"resource_admins":           "alpha-admins",
 }
+
+var cernArgs = func() map[string]any {
+	args := map[string]any{"name": "alpha"}
+	for k, v := range cernExtra {
+		args[k] = v
+	}
+	return args
+}()
 
 func checkExtra(t *testing.T, what string, extra map[string]string) {
 	t.Helper()
@@ -172,7 +169,6 @@ func TestHardDeleteReturnsTheColumns(t *testing.T) {
 	}
 }
 
-// After the columns leave the reva model, a new row has NULL in them.
 func TestNullColumns(t *testing.T) {
 	ctx := context.Background()
 	c := newCatalogue(t, filepath.Join(t.TempDir(), "projects.db"))

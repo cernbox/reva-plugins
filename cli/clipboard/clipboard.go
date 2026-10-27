@@ -16,23 +16,18 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-// Package clipboard is the clipboard of the cernbox CLI, which crosses
-// machines: `cernbox copy` on one, `cernbox paste` on another, with CERNBox
-// in between, and `cernbox clipboard list|clear` for the slots. It is the
-// one state that both machines can see, so it lives in the home space, in
-// the same place and format as in cernbox-cli.
+// Package clipboard implements the copy, paste and clipboard commands, a
+// clipboard that crosses machines. It is stored in the home space, in the same
+// place and format as in cernbox-cli.
 //
-// A path already in CERNBox is only pointed at: paste to another CERNBox
-// path is a server-side copy, with no data through the client. A local path
-// is staged: uploaded on copy, downloaded on paste. Which one applies
-// follows the rule of cp: cb: or a space alias is CERNBox, anything else is
-// local, also /eos/..., which is a local mount on lxplus.
-//
-// The commands use Runtime.Backend and Runtime.Data, so they work over
-// both transports.
+// A path in CERNBox (cb: or a space alias) is only pointed at, and paste to
+// another CERNBox path is a server-side copy. Any other path is local, also
+// /eos/..., which is a local mount on lxplus. A local path is uploaded on copy
+// and downloaded on paste.
 package clipboard
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -60,7 +55,6 @@ func init() {
 
 const expiryLayout = "2006-01-02"
 
-// board is one run of a clipboard command.
 type board struct {
 	*userplane.Session
 	in io.Reader
@@ -74,7 +68,7 @@ func open(cmd *cobra.Command, rt *cli.Runtime) (*board, error) {
 	return &board{Session: s, in: cmd.InOrStdin()}, nil
 }
 
-// NewCopy returns the command copy.
+// NewCopy returns the copy command.
 func NewCopy(rt *cli.Runtime) *cobra.Command {
 	var opts copyOptions
 	cmd := &cobra.Command{
@@ -128,17 +122,13 @@ type copyOptions struct {
 	name      string
 	verify    bool
 	jobs      int
-	// stream hands the source over live instead of storing a copy.
-	stream bool
-	// wait bounds every step that depends on the other machine.
-	wait time.Duration
-	// to is the person the copy is for, empty for your own clipboard.
-	to string
-	// slotGiven is whether --slot was typed, which --to refuses.
+	stream    bool
+	wait      time.Duration
+	to        string
 	slotGiven bool
 }
 
-// NewPaste returns the command paste.
+// NewPaste returns the paste command.
 func NewPaste(rt *cli.Runtime) *cobra.Command {
 	var opts pasteOptions
 	cmd := &cobra.Command{
@@ -187,16 +177,12 @@ type pasteOptions struct {
 	verify    bool
 	noArchive bool
 	jobs      int
-	// wait bounds how long a live handover waits for the far end.
-	wait time.Duration
-	// from is whose clipboard to read, empty for your own.
-	from string
-	// slotGiven is whether --slot was typed, which --from refuses.
+	wait      time.Duration
+	from      string
 	slotGiven bool
 }
 
-// New returns the command clipboard, which manages the slots that copy and
-// paste use.
+// New returns the clipboard command.
 func New(rt *cli.Runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clipboard",
@@ -241,18 +227,12 @@ func New(rt *cli.Runtime) *cobra.Command {
 	return cmd
 }
 
-// errNoSlot is a slot with no manifest: nothing was copied there.
 var errNoSlot = errors.New("nothing has been copied here yet")
 
-// -- copy ---------------------------------------------------------------------
-
-// source is one argument of copy, classified before anything moves.
 type source struct {
 	stdin bool
 	arg   userplane.Arg
-	// name is what the entry is called on the clipboard, and what paste
-	// writes it as.
-	name string
+	name  string
 }
 
 func (b *board) copy(ctx context.Context, args []string, opts copyOptions) error {
@@ -266,15 +246,12 @@ func (b *board) copy(ctx context.Context, args []string, opts copyOptions) error
 	if err := ValidateSlot(opts.slot); err != nil {
 		return cli.Usagef("%v", err)
 	}
-	// All is parsed and named before anything moves: a typo in the last
-	// argument must not leave a slot with half a copy.
+	// Parse every argument first: a typo in the last one must not leave half a copy.
 	sources, err := b.classify(ctx, args, opts)
 	if err != nil {
 		return err
 	}
 	if opts.stream {
-		// A handover is a live pipe between two machines: there is nothing for
-		// a second source to do while the first is read.
 		if len(sources) != 1 {
 			return cli.Usagef("--stream hands over one thing at a time, and %d were given", len(sources))
 		}
@@ -285,15 +262,14 @@ func (b *board) copy(ctx context.Context, args []string, opts copyOptions) error
 	if err != nil {
 		return err
 	}
-	// The manifest is replaced only while it has this etag, so that two
-	// machines copying to one slot at once give an error, not a broken slot.
+	// The manifest is replaced only while it has this etag, so that two machines
+	// copying to one slot give an error, not a broken slot.
 	prior, priorETag, err := b.priorSlot(ctx, root, opts.slot)
 	if err != nil {
 		return err
 	}
-	// An upload into a folder that is not there fails. A handover stages
-	// everything, also the CERNBox paths that a copy only points at.
-	if anyStaged(sources) || opts.to != "" {
+	// A handover stages everything, also the CERNBox paths.
+	if opts.to != "" || slices.ContainsFunc(sources, func(s source) bool { return s.stdin || !s.arg.Remote }) {
 		if err := b.Mkdir(ctx, PayloadDir(root, opts.slot)); err != nil {
 			return err
 		}
@@ -309,16 +285,13 @@ func (b *board) copy(ctx context.Context, args []string, opts copyOptions) error
 		m.Entries = append(m.Entries, e)
 	}
 
-	// The staging is done before the manifest is replaced, so until here the
-	// slot still holds the previous copy in full: a failure above leaves it
-	// pastable, never a manifest that points at deleted bytes.
+	// The manifest is replaced after the staging, so a failure leaves the
+	// previous copy pastable.
 	if err := b.writeSlot(ctx, root, m, priorETag); err != nil {
 		return err
 	}
-	// Only now is the payload of the previous copy unreferenced.
 	b.discardUnreferenced(ctx, prior, m)
-	// Copy makes the quota pressure, so it gives some back: nothing runs on
-	// a schedule to do it.
+	// Nothing else collects expired slots.
 	b.collectExpired(ctx, root)
 
 	name := b.RT.Name()
@@ -337,8 +310,6 @@ func (b *board) copy(ctx context.Context, args []string, opts copyOptions) error
 	return b.JSON(m)
 }
 
-// classify parses the arguments and names each entry, refusing what would
-// silently lose one.
 func (b *board) classify(ctx context.Context, args []string, opts copyOptions) ([]source, error) {
 	out := make([]source, 0, len(args))
 	seenStdin := false
@@ -364,8 +335,7 @@ func (b *board) classify(ctx context.Context, args []string, opts copyOptions) (
 		}
 		out = append(out, source{arg: a, name: name})
 	}
-	// Two arguments with the same base name would land on each other, in the
-	// slot and wherever they are pasted.
+	// Two arguments with one base name would land on each other.
 	seen := map[string]bool{}
 	for _, s := range out {
 		if seen[s.name] {
@@ -376,12 +346,6 @@ func (b *board) classify(ctx context.Context, args []string, opts copyOptions) (
 	return out, nil
 }
 
-func anyStaged(sources []source) bool {
-	return slices.ContainsFunc(sources, func(s source) bool { return s.stdin || !s.arg.Remote })
-}
-
-// copyOne puts one source on the clipboard, and uploads it only when it is
-// not in CERNBox already.
 func (b *board) copyOne(ctx context.Context, root string, src source, opts copyOptions) (Entry, error) {
 	staged := path.Join(PayloadDir(root, opts.slot), src.name)
 	switch {
@@ -399,9 +363,8 @@ func (b *board) copyOne(ctx context.Context, root string, src source, opts copyO
 	return b.stageLocal(ctx, src, staged, opts)
 }
 
-// copyRemoteIntoSlot copies a CERNBox path into the slot, on the server.
-// The recipient of a handover cannot read the path of the sender, and a
-// share of it would give far more than the one thing handed over.
+// copyRemoteIntoSlot copies on the server. The recipient cannot read the path
+// of the sender, and a share of it would give far more than the one thing sent.
 func (b *board) copyRemoteIntoSlot(ctx context.Context, src source, staged string) (Entry, error) {
 	info, err := b.Stat(ctx, src.arg.Path)
 	if err != nil {
@@ -413,7 +376,6 @@ func (b *board) copyRemoteIntoSlot(ctx context.Context, src source, staged strin
 	return Entry{Name: src.name, Path: staged, IsDir: userplane.IsDir(info), Size: int64(info.GetSize()), Staged: true, ETag: info.GetEtag()}, nil
 }
 
-// referenceRemote records a path that is in CERNBox, without moving a byte.
 func (b *board) referenceRemote(ctx context.Context, src source, opts copyOptions) (Entry, error) {
 	info, err := b.Stat(ctx, src.arg.Path)
 	if err != nil {
@@ -425,7 +387,6 @@ func (b *board) referenceRemote(ctx context.Context, src source, opts copyOption
 	return Entry{Name: src.name, Path: src.arg.Path, IsDir: userplane.IsDir(info), Size: int64(info.GetSize()), ETag: info.GetEtag()}, nil
 }
 
-// stageLocal uploads a local path into the slot.
 func (b *board) stageLocal(ctx context.Context, src source, staged string, opts copyOptions) (Entry, error) {
 	info, err := os.Stat(src.arg.Path)
 	if err != nil {
@@ -434,8 +395,7 @@ func (b *board) stageLocal(ctx context.Context, src source, staged string, opts 
 	if info.IsDir() && !opts.recursive {
 		return Entry{}, cli.Usagef("%s is a directory: pass -r to copy it", src.arg.Path)
 	}
-	// On lxplus this may be the FUSE mount of the space that the clipboard is
-	// in, and then the upload is a waste of the whole file.
+	// On lxplus this may be the mount of the space of the clipboard.
 	if strings.HasPrefix(src.arg.Path, "/eos/") {
 		b.Msg("Tip: cb:%s would point at the file instead of uploading a copy.", src.arg.Path)
 	}
@@ -452,16 +412,10 @@ func (b *board) stageLocal(ctx context.Context, src source, staged string, opts 
 	return Entry{Name: src.name, Path: staged, IsDir: info.IsDir(), Size: stats.Bytes, Staged: true}, nil
 }
 
-// stageStdin sends standard input to CERNBox without writing it to local
-// disk, and returns its size and its number of pieces.
-//
-// A pipe has no length, and every upload of reva needs one up front: PUT
-// wants Content-Length, and TUS has no creation-defer-length. So the stream
-// is read a chunk at a time and each chunk is its own file, whose length is
-// known when it goes out. Memory stays at one chunk, and paste joins the
-// pieces. A temporary file would need as much free local disk as the
-// stream, which is what lxplus does not have. A stream of one chunk is one
-// plain file.
+// stageStdin sends standard input to CERNBox, and returns its size and its
+// number of pieces. A pipe has no length, and PUT and TUS need one up front, so
+// each chunk is its own file. A temporary file would need as much local disk as
+// the pipe, which lxplus does not have. A pipe of one chunk is one plain file.
 func (b *board) stageStdin(ctx context.Context, base string) (int64, int, error) {
 	buf := make([]byte, b.RT.Transfer().ChunkSize)
 	n, err := io.ReadFull(b.in, buf)
@@ -474,7 +428,6 @@ func (b *board) stageStdin(ctx context.Context, base string) (int64, int, error)
 	if err != nil {
 		return 0, 0, fmt.Errorf("reading standard input: %w", err)
 	}
-	// The pieces go in a folder of their own, which one remove releases.
 	if err := b.Mkdir(ctx, base); err != nil {
 		return 0, 0, err
 	}
@@ -498,8 +451,6 @@ func (b *board) stageStdin(ctx context.Context, base string) (int64, int, error)
 	}
 }
 
-// streamEntry writes the content of e to w, and joins its pieces. Nothing is
-// held beyond the buffer of io.Copy.
 func (b *board) streamEntry(ctx context.Context, e Entry, w io.Writer) error {
 	if e.Parts == 0 {
 		return b.streamOne(ctx, e, e.Path, w)
@@ -524,8 +475,6 @@ func (b *board) streamOne(ctx context.Context, e Entry, p string, w io.Writer) e
 	return nil
 }
 
-// -- paste --------------------------------------------------------------------
-
 func (b *board) paste(ctx context.Context, args []string, opts pasteOptions) error {
 	if opts.from != "" && opts.slotGiven {
 		return cli.Usagef("--from reads the slot the sender staged for you, which is named after you, " +
@@ -546,16 +495,12 @@ func (b *board) paste(ctx context.Context, args []string, opts pasteOptions) err
 		return fmt.Errorf("the %q clipboard slot is empty", opts.slot)
 	}
 	if m.Expired(time.Now()) {
-		// The bytes are still here, since the manifest was: say that they
-		// are stale rather than refuse them.
 		b.Warn("this copy expired on %s and may be removed at any time", m.Expires.Local().Format(expiryLayout))
 	}
 	dest := "."
 	if len(args) == 1 {
 		dest = args[0]
 	}
-	// A live handover has a process on the other side, which waits to be
-	// told that somebody arrived, and nothing to download until then.
 	if m.IsStream() {
 		if dest != "-" {
 			if a, err := userplane.ParseArg(ctx, b.RT, dest); err == nil && a.Remote {
@@ -568,8 +513,7 @@ func (b *board) paste(ctx context.Context, args []string, opts pasteOptions) err
 	if err := b.pasteStored(ctx, m, dest, opts); err != nil {
 		return err
 	}
-	// A collected handover is plumbing of the CLI: it goes out of the share
-	// list of the recipient, which grants and revokes nothing.
+	// A collected handover is no share for the recipient to accept.
 	if opts.from != "" {
 		b.hideHandover(ctx, in)
 	}
@@ -590,11 +534,9 @@ func (b *board) pasteStored(ctx context.Context, m *Manifest, dest string, opts 
 	return b.pasteLocal(ctx, m, a, opts)
 }
 
-// pasteLocal downloads the slot to the local file system.
 func (b *board) pasteLocal(ctx context.Context, m *Manifest, a userplane.Arg, opts pasteOptions) error {
 	dest := a.Path
-	// A trailing slash says "into a folder", so make one. Without it the rule
-	// is that of cp: a folder that exists means into it.
+	// A trailing slash means "into a folder", so make it.
 	if a.TrailingSlash {
 		if err := os.MkdirAll(dest, 0o755); err != nil {
 			return err
@@ -605,8 +547,7 @@ func (b *board) pasteLocal(ctx context.Context, m *Manifest, a userplane.Arg, op
 	if err != nil {
 		return err
 	}
-	// Refused before anything moves, so that a paste of several items
-	// happens or does not, and never stops half way.
+	// Refuse before anything moves, so that a paste never stops half way.
 	if !opts.force {
 		if clashes := slices.DeleteFunc(slices.Clone(targets), func(t string) bool { return !userplane.PathTaken(t) }); len(clashes) > 0 {
 			return fmt.Errorf("%s already exists: pass -f to overwrite", strings.Join(clashes, ", "))
@@ -622,8 +563,7 @@ func (b *board) pasteLocal(ctx context.Context, m *Manifest, a userplane.Arg, op
 	var total int64
 	for i, en := range m.Entries {
 		bar.SetLabel(en.Name)
-		// The pieces of a stream are joined on the way to disk: the engine
-		// cannot fetch them as one file.
+		// The engine cannot fetch the pieces of a pipe as one file.
 		if en.Parts > 0 {
 			n, err := b.pasteStreamedToFile(ctx, en, targets[i], bar)
 			if err != nil {
@@ -644,7 +584,6 @@ func (b *board) pasteLocal(ctx context.Context, m *Manifest, a userplane.Arg, op
 	return b.JSON(m)
 }
 
-// pasteRemote copies the slot to another CERNBox path, on the server.
 func (b *board) pasteRemote(ctx context.Context, m *Manifest, a userplane.Arg, opts pasteOptions) error {
 	dest := a.Path
 	if a.TrailingSlash {
@@ -674,8 +613,7 @@ func (b *board) pasteRemote(ctx context.Context, m *Manifest, a userplane.Arg, o
 	streamed := false
 	for i, e := range m.Entries {
 		bar.SetLabel(e.Name)
-		// A server-side copy cannot join pieces, so a stream is pulled and
-		// pushed back: the one paste inside CERNBox that moves data.
+		// A server-side copy cannot join pieces, so they go through this client.
 		if e.Parts > 0 {
 			streamed = true
 			if err := b.pasteStreamedToRemote(ctx, e, targets[i], bar); err != nil {
@@ -698,8 +636,6 @@ func (b *board) pasteRemote(ctx context.Context, m *Manifest, a userplane.Arg, o
 	return b.JSON(m)
 }
 
-// pasteToStdout writes one item to stdout: the other half of
-// "tar cz dir | cernbox copy -".
 func (b *board) pasteToStdout(ctx context.Context, m *Manifest) error {
 	if len(m.Entries) != 1 {
 		return cli.Usagef("the clipboard holds %s: standard output takes one at a time", itemCount(len(m.Entries)))
@@ -713,14 +649,11 @@ func (b *board) pasteToStdout(ctx context.Context, m *Manifest) error {
 	return b.streamEntry(ctx, e, bar.Writer(b.Cmd.OutOrStdout()))
 }
 
-// pasteStreamedToFile joins the pieces of e into a local file, as they
-// arrive: it needs room for the result and nothing more.
 func (b *board) pasteStreamedToFile(ctx context.Context, e Entry, target string, bar *userplane.Meter) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return 0, err
 	}
-	// Written beside the target and renamed, as the transfer engine does: a
-	// reader of the target never sees a half-joined file.
+	// Write beside the target and rename, so that nobody sees a half file.
 	part := target + ".part"
 	f, err := os.Create(part)
 	if err != nil {
@@ -740,21 +673,18 @@ func (b *board) pasteStreamedToFile(ctx context.Context, e Entry, target string,
 	return e.Size, nil
 }
 
-// pasteStreamedToRemote rebuilds the pieces of e at target through a pipe,
-// so the file is never whole anywhere but in flight. The size in the
-// manifest is the length that the upload needs.
 func (b *board) pasteStreamedToRemote(ctx context.Context, e Entry, target string, bar *userplane.Meter) error {
 	pr, pw := io.Pipe()
 	go func() {
-		// A failed download is a failed upload, not a truncated file.
+		// A failed download must fail the upload, not truncate the file.
 		pw.CloseWithError(b.streamEntry(ctx, e, bar.Writer(pw)))
 	}()
 	defer pr.Close()
 	return b.D.UploadStream(ctx, userplane.Ref(target), pr, e.Size)
 }
 
-// pasteTargets is where each entry lands, with the rule of cp: a folder
-// that exists means into it, anything else names the one item.
+// pasteTargets follows the rule of cp: an existing folder means into it,
+// anything else names the one item.
 func pasteTargets(m *Manifest, dest string, destIsDir bool, join func(...string) string) ([]string, error) {
 	if destIsDir {
 		out := make([]string, 0, len(m.Entries))
@@ -769,8 +699,6 @@ func pasteTargets(m *Manifest, dest string, destIsDir bool, join func(...string)
 	return []string{dest}, nil
 }
 
-// pasteError explains what the clipboard points at and is gone: a
-// referenced entry is the file of the user, which may have moved since.
 func pasteError(err error, e Entry) error {
 	if !cli.IsNotFound(err) {
 		return err
@@ -781,12 +709,9 @@ func pasteError(err error, e Entry) error {
 	return fmt.Errorf("pasting %s: the clipboard points at %s, which has been moved or deleted since it was copied", e.Name, e.Path)
 }
 
-// reportSlotSurvives says that paste did not empty the clipboard, which is
-// what a user is most likely to assume wrongly.
 func (b *board) reportSlotSurvives(m *Manifest, from string) {
 	switch {
 	case from != "":
-		// The slot of somebody else, on their quota: clear does nothing here.
 		b.Msg("It stays on %s's clipboard until they clear it. Paste it again if you need to.", from)
 	case !m.HasStaged():
 		b.Msg("Still on the clipboard. Paste it again anywhere, or '%s clipboard clear' to forget it.", b.RT.Name())
@@ -796,11 +721,7 @@ func (b *board) reportSlotSurvives(m *Manifest, from string) {
 	}
 }
 
-// -- clipboard list and clear -------------------------------------------------
-
-// slotView is a slot in the listing: the manifest, and who handed it over
-// when it was not the caller. The manifest is embedded, so that -o json
-// keeps its shape with one more key.
+// slotView embeds the manifest, so that -o json keeps its shape with one more key.
 type slotView struct {
 	*Manifest
 	From string `json:"from,omitempty"`
@@ -820,8 +741,7 @@ func (b *board) list(ctx context.Context) error {
 	for _, m := range manifests {
 		slots = append(slots, slotView{Manifest: m})
 	}
-	// What others staged for you is on their quota and pasted with --from,
-	// but belongs here: else only they can tell you that they sent it.
+	// Handovers to you are on the quota of the sender, but only the list can tell you.
 	slots = append(slots, b.incomingHandovers(ctx)...)
 	if len(slots) == 0 {
 		b.Msg("The clipboard is empty. Use '%s copy PATH' to put something on it.", b.RT.Name())
@@ -830,7 +750,7 @@ func (b *board) list(ctx context.Context) error {
 	t := cli.Table{Headers: []string{"Slot", "From", "Contents", "Size", "Origin", "Copied", "Expires"}, Items: slots}
 	for _, s := range slots {
 		t.Rows = append(t.Rows, []string{
-			s.Slot, orDash(s.From), contentsColumn(s.Manifest), output.HumanSize(s.Size()),
+			s.Slot, cmp.Or(s.From, "-"), contentsColumn(s.Manifest), output.HumanSize(s.Size()),
 			s.Origin.String(), agoColumn(s.Created, now), manifestExpiry(s.Manifest),
 		})
 	}
@@ -874,14 +794,12 @@ func (b *board) clear(ctx context.Context, slots []string, all bool) error {
 		if err := ValidateSlot(slot); err != nil {
 			return cli.Usagef("%v", err)
 		}
-		// Read first, to tell how much quota comes back.
 		if m, err := b.readSlot(ctx, root, slot); err == nil {
 			freed += m.StagedSize()
 		} else if !errors.Is(err, errNoSlot) {
 			return err
 		}
-		// The grants of a handover go before their folder, or they outlive
-		// it in the share list, naming a path in the trash.
+		// Revoke before removing, or the share names a path in the trash.
 		b.unshareHandover(ctx, root, slot)
 		removed, err := b.RemoveIfPresent(ctx, SlotDir(root, slot))
 		if err != nil {
@@ -900,10 +818,7 @@ func (b *board) clear(ctx context.Context, slots []string, all bool) error {
 	return b.JSON(map[string]any{"cleared": cleared, "freed_bytes": freed})
 }
 
-// -- storage ------------------------------------------------------------------
-
-// pasteSource is the clipboard that paste reads, and sets the slot when it
-// is that of somebody else.
+// pasteSource finds the clipboard to read, and sets the slot for --from.
 func (b *board) pasteSource(ctx context.Context, opts *pasteOptions) (incoming, error) {
 	if opts.from == "" {
 		root, err := b.root(ctx)
@@ -917,8 +832,6 @@ func (b *board) pasteSource(ctx context.Context, opts *pasteOptions) (incoming, 
 	return b.senderClipboard(ctx, opts.from, opts.slot)
 }
 
-// root is where the clipboard lives: the home space, which every account
-// has, and which both machines find without being told.
 func (b *board) root(ctx context.Context) (string, error) {
 	home, err := b.Home(ctx)
 	if err != nil {
@@ -950,8 +863,8 @@ func (b *board) readSlot(ctx context.Context, root, slot string) (*Manifest, err
 	return m, nil
 }
 
-// readSlots reads every slot, in name order. A slot that cannot be read is
-// reported and skipped: one broken slot must not hide the others.
+// readSlots reads every slot, in name order. It skips a slot that cannot be
+// read, so that one broken slot does not hide the others.
 func (b *board) readSlots(ctx context.Context, root string) ([]*Manifest, error) {
 	entries, err := b.List(ctx, root)
 	if err != nil {
@@ -976,9 +889,8 @@ func (b *board) readSlots(ctx context.Context, root string) ([]*Manifest, error)
 	return out, nil
 }
 
-// priorSlot is what a slot holds before a copy replaces it, and the etag of
-// its manifest. A manifest that does not decode is an empty slot: the copy
-// replaces it, and refusing would leave a slot that cannot be overwritten.
+// priorSlot returns the manifest of a slot and its etag. A manifest that does
+// not decode counts as empty, or the slot could never be overwritten.
 func (b *board) priorSlot(ctx context.Context, root, slot string) (*Manifest, string, error) {
 	info, err := b.Stat(ctx, ManifestPath(root, slot))
 	if err != nil {
@@ -987,16 +899,12 @@ func (b *board) priorSlot(ctx context.Context, root, slot string) (*Manifest, st
 		}
 		return nil, "", err
 	}
-	m, err := b.readSlot(ctx, root, slot)
-	if err != nil {
-		return nil, info.GetEtag(), nil
-	}
+	m, _ := b.readSlot(ctx, root, slot)
 	return m, info.GetEtag(), nil
 }
 
-// writeSlot stores the manifest. ifMatch is the etag that it must still
-// have: another one means that another machine copied to the slot
-// meanwhile, and overwriting would orphan its staged bytes in the quota.
+// writeSlot stores the manifest. ifMatch is the etag that the old manifest must
+// still have, or another machine copied meanwhile and its bytes would be orphaned.
 func (b *board) writeSlot(ctx context.Context, root string, m *Manifest, ifMatch string) error {
 	data, err := m.Encode()
 	if err != nil {
@@ -1007,12 +915,11 @@ func (b *board) writeSlot(ctx context.Context, root string, m *Manifest, ifMatch
 		return err
 	}
 	if ifMatch == "" {
-		// reva ignores If-None-Match, so two first writes of one slot at once
-		// cannot be told apart; the origin in the manifest shows which won.
+		// reva ignores If-None-Match, so two first writes cannot be told apart.
 		return b.PutBytes(ctx, p, data)
 	}
 	err = b.D.UploadIfUnchanged(ctx, userplane.Ref(p), func() (io.ReadCloser, error) {
-		return io.NopCloser(strings.NewReader(string(data))), nil
+		return io.NopCloser(bytes.NewReader(data)), nil
 	}, int64(len(data)), ifMatch)
 	if userplane.IsConflict(err) {
 		return fmt.Errorf("copy to the %q slot: another computer copied to it at the same time. "+
@@ -1022,8 +929,7 @@ func (b *board) writeSlot(ctx context.Context, root string, m *Manifest, ifMatch
 }
 
 // discardUnreferenced deletes what the previous copy staged and the new one
-// does not, so that a slot replaced over and over does not grow. It runs
-// after the manifest is written, and is best effort: the copy succeeded.
+// does not. It is best effort: the copy succeeded.
 func (b *board) discardUnreferenced(ctx context.Context, prior, current *Manifest) {
 	if prior == nil {
 		return
@@ -1033,8 +939,7 @@ func (b *board) discardUnreferenced(ctx context.Context, prior, current *Manifes
 		kept[e.Path] = true
 	}
 	for _, e := range prior.Entries {
-		// Only the duplicates of the clipboard: a referenced entry is the real
-		// file of the user.
+		// A referenced entry is the real file of the user.
 		if !e.Staged || kept[e.Path] {
 			continue
 		}
@@ -1044,9 +949,8 @@ func (b *board) discardUnreferenced(ctx context.Context, prior, current *Manifes
 	}
 }
 
-// collectExpired deletes the slots past their expiry, on the commands that
-// look at the clipboard anyway. Best effort: it must not fail the command
-// that the user ran.
+// collectExpired deletes the expired slots. It is best effort and must not
+// fail the command.
 func (b *board) collectExpired(ctx context.Context, root string) {
 	entries, err := b.List(ctx, root)
 	if err != nil {
@@ -1068,8 +972,6 @@ func (b *board) collectExpired(ctx context.Context, root string) {
 		b.Msg("Removed the expired %q clipboard slot.", userplane.Name(e))
 	}
 }
-
-// -- display ------------------------------------------------------------------
 
 func contentsColumn(m *Manifest) string {
 	switch len(m.Entries) {
@@ -1134,8 +1036,6 @@ func pasteLabel(m *Manifest) string {
 
 func itemCount(n int) string { return userplane.Plural(n, "item", "items") }
 
-// slotArg is the argument that names a slot in a hint, nothing for the
-// default one, so that the hints are the commands to type.
 func slotArg(slot string) string {
 	if slot == "" || slot == DefaultSlot {
 		return ""
@@ -1157,9 +1057,6 @@ func pasteHint(name, slot string) string {
 	return name + " paste --slot " + slot
 }
 
-func orDash(s string) string { return cmp.Or(s, "-") }
-
-// workingDir is recorded on a copy, to tell apart two files of one name.
 func workingDir() string {
 	dir, _ := os.Getwd()
 	return dir

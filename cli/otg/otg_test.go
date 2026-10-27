@@ -35,7 +35,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// otgServer keeps the message in memory, as the otg service does in its table.
 func otgServer(t *testing.T, st api.Status) *fakeadmin.Server {
 	return fakeadmin.Start(t, func(req *adminpb.InvokeRequest) (any, error) {
 		switch req.Invocation {
@@ -149,7 +148,6 @@ func TestSetBadUsage(t *testing.T) {
 	}
 }
 
-// Without --yes and without a terminal, set and clear change nothing.
 func TestConfirmation(t *testing.T) {
 	for _, args := range [][]string{{"otg", "set", "--number", "OTG1", "--message", "m"}, {"otg", "clear"}} {
 		s := otgServer(t, api.Status{Present: true, Number: "OTG1", Message: "m"})
@@ -190,7 +188,6 @@ func TestOperatorCommand(t *testing.T) {
 	if otg := c.Parent(); otg.GroupID != "fleet" || !strings.HasSuffix(otg.Short, "(admin)") {
 		t.Errorf("otg: group %q, short %q", otg.GroupID, otg.Short)
 	}
-	// --as is for the user plane only.
 	_, err = otgServer(t, api.Status{}).Run(t, "--as", "alice", "otg", "get")
 	if err == nil || !strings.Contains(err.Error(), "--as") {
 		t.Errorf("err %v, want a refusal of --as", err)

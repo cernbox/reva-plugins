@@ -78,8 +78,8 @@ func SkipName(name string) bool {
 	return false
 }
 
-// DefaultExecTimeout bounds a hook. One that hangs would stop an unattended
-// run for ever, with nothing to show why.
+// DefaultExecTimeout bounds a hook: one that hangs would stop an unattended
+// run without a sign.
 const DefaultExecTimeout = 5 * time.Minute
 
 // hookWaitDelay is how long Wait waits for the output pipes after the kill:
@@ -87,10 +87,8 @@ const DefaultExecTimeout = 5 * time.Minute
 const hookWaitDelay = time.Second
 
 // RunHook runs command with path as its last argument, and env added to
-// the environment. The command is split on spaces and never given to a
-// shell: the file names come from whoever fills the folder, with an upload
-// link a stranger. Its output goes to stderr, so that it cannot land in the
-// middle of -o json.
+// the environment. It never uses a shell: a stranger can choose the file
+// names, with an upload link. The output goes to stderr, not into -o json.
 func RunHook(ctx context.Context, stderr io.Writer, command []string, timeout time.Duration, path string, env []string) error {
 	if len(command) == 0 {
 		return nil
@@ -112,8 +110,7 @@ func RunHook(ctx context.Context, stderr io.Writer, command []string, timeout ti
 	case ctx.Err() != nil:
 		return fmt.Errorf("%s did not finish within %s", command[0], timeout)
 	}
-	// A hook that could not start is a path or a permission to fix; one
-	// that exited non-zero did its job and said no.
+	// A hook that could not start needs a fix. One that exited non-zero said no.
 	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
 		return fmt.Errorf("%s exited with status %d", command[0], exit.ExitCode())
 	}

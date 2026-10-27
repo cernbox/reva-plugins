@@ -2,9 +2,8 @@
 #
 #   gaia build --binary reva --brand cli/cernbox.toml --with github.com/cernbox/reva-plugins/cli
 #
-# The values are the defaults of cernbox-cli (DefaultConfig in
-# internal/cli/config.go, and packaging/config.yaml). The flags, the env, the
-# user config and /etc/cernbox/config.toml override every one of them.
+# The flags, the env, the user config and /etc/cernbox/config.toml override
+# every value.
 
 [program]
 name        = "cernbox"
@@ -14,23 +13,18 @@ support_url = "https://cern.service-now.com/service-portal?id=service_element&na
 config_dir  = "cernbox"
 
 [connection]
-# auto: gRPC when a gateway is set (a host with one in /etc/cernbox/config.toml),
-# else HTTPS to the endpoint, which is what a laptop has.
+# auto: gRPC when a gateway is set, else HTTPS to the endpoint.
 transport = "auto"
 endpoint  = "https://cernbox.cern.ch"
 
 [auth]
-# The order of cernbox-cli: a token that is given, the Kerberos ticket of
-# kinit, an app token, then the device flow on a terminal. reva puts app-token
-# first when one is set. cern-sso uses the same ticket through CERN SSO, for
-# when CERNBox cannot take it directly.
+# reva puts app-token first when one is set. cern-sso uses the Kerberos
+# ticket through CERN SSO, for when CERNBox cannot take it directly.
 chain = ["token", "kerberos", "cern-sso", "app-token", "device"]
 
 [auth.kerberos]
-# The ticket goes straight to CERNBox, which answers with a reva token. This
-# path also returns the user, so the sign-in is one request. The SPN is left
-# to HTTP/<endpoint host> (HTTP/cernbox.cern.ch), as cernbox-cli does, so that
-# another endpoint gets its own.
+# This path also returns the user, so the sign-in is one request. The SPN is
+# left to HTTP/<endpoint host>, so that another endpoint gets its own.
 path = "/graph/v1.0/me"
 
 [auth.oidc]
@@ -38,7 +32,6 @@ issuer    = "https://auth.cern.ch/auth/realms/cern"
 client_id = "cernbox-cli"
 
 [auth.types]
-# The auth types of the CERNBox gateway, for a sign-in over gRPC.
 bearer    = "bearer"
 basic     = "basic"
 app-token = "appauth"
@@ -54,7 +47,7 @@ token          = ["CERNBOX_TOKEN"]
 token_cache    = ["CERNBOX_TOKEN_CACHE"]
 app_token      = ["CERNBOX_APP_TOKEN"]
 app_token_file = ["CERNBOX_APP_TOKEN_FILE"]
-# cernbox-cli read CERNBOX_USER for an app token and CERNBOX_USERNAME for basic.
+# CERNBOX_USER is for an app token and CERNBOX_USERNAME for basic.
 user           = ["CERNBOX_USER", "CERNBOX_USERNAME"]
 password       = ["CERNBOX_PASSWORD"]
 kerberos_spn   = ["CERNBOX_KERBEROS_SPN"]
@@ -67,12 +60,11 @@ chunk_size = "8M"
 archive    = true
 
 [messages]
-# The remedies of cernbox-cli's doctor.
 network_hint = "check the address, and whether this machine needs the CERN network to reach it"
 no_home_hint = "your home space is not there; ask CERNBox support to provision it"
 
 [ui]
 output            = "table"
 # Shown to operators only: a host with the admin socket, an admin host or an
-# admin token of elevate.
+# elevate token.
 operator_commands = "auto"

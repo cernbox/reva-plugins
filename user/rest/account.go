@@ -32,8 +32,7 @@ import (
 	"github.com/cs3org/reva/v3/pkg/utils"
 )
 
-// accountFields are the Identity fields that driver.account reads. Without
-// field=, Grappa returns also personal data that operators do not need.
+// Without field=, Grappa also returns personal data that operators do not need.
 var accountFields = []string{
 	"id", "upn", "type", "source", "displayName", "firstName", "lastName", "primaryAccountEmail",
 	"uid", "gid", "cernDepartment", "cernGroup", "cernSection", "telephone1", "telephone2",
@@ -41,7 +40,8 @@ var accountFields = []string{
 	"blockingDeadline", "ownerId",
 }
 
-// accountIdentity is a Grappa Identity with the fields of accountFields.
+var fieldQuery = neturl.Values{"field": accountFields}.Encode()
+
 type accountIdentity struct {
 	Identity
 	ID               string `json:"id"`
@@ -65,7 +65,7 @@ type accountArgs struct {
 	User string `arg:"user,required" help:"the username, or the email of a lightweight account"`
 }
 
-// The invocation is Shared because all the instances read the same Grappa.
+// The invocation is shared: all the instances read the same Grappa.
 func (m *manager) registerInvocations() {
 	m.invocations = invoke.NewSet()
 	m.invocations.Add(api.Name, "Show a CERN account from Grappa: type, owner, department and blocking state.").
@@ -73,7 +73,7 @@ func (m *manager) registerInvocations() {
 		Handle(invoke.Typed(m.account))
 }
 
-// Invocations implements invoke.Invokable: the userprovider publishes them as driver.*.
+// Invocations implements invoke.Invokable.
 func (m *manager) Invocations() []invoke.InvocationSpec {
 	return m.invocations.Invocations()
 }
@@ -109,8 +109,8 @@ func (m *manager) lookupIdentity(ctx context.Context, user string) (*accountIden
 	if strings.Contains(user, "@") {
 		id.Type = userpb.UserType_USER_TYPE_LIGHTWEIGHT
 	}
-	// A cache miss is not an error: the cache can be cold, and Grappa has
-	// also the accounts that the bulk fetch does not keep.
+	// A cache miss is not an error: Grappa also has the accounts that the
+	// bulk fetch does not keep.
 	if u, err := m.cache.GetByUsername(ctx, user); err == nil {
 		id = u.GetId()
 	}
@@ -118,7 +118,7 @@ func (m *manager) lookupIdentity(ctx context.Context, user string) (*accountIden
 		return m.fetchIdentity(ctx, id.OpaqueId)
 	}
 
-	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&%s", m.conf.APIBaseURL, neturl.PathEscape(id.OpaqueId), fieldQuery())
+	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&%s", m.conf.APIBaseURL, neturl.PathEscape(id.OpaqueId), fieldQuery)
 	var r struct {
 		Data []*accountIdentity `json:"data"`
 	}
@@ -135,7 +135,7 @@ func (m *manager) lookupIdentity(ctx context.Context, user string) (*accountIden
 
 // fetchIdentity takes the Identity id or its upn.
 func (m *manager) fetchIdentity(ctx context.Context, id string) (*accountIdentity, error) {
-	url := fmt.Sprintf("%s/api/v1.0/Identity/%s?%s", m.conf.APIBaseURL, neturl.PathEscape(id), fieldQuery())
+	url := fmt.Sprintf("%s/api/v1.0/Identity/%s?%s", m.conf.APIBaseURL, neturl.PathEscape(id), fieldQuery)
 	var r struct {
 		Data *accountIdentity `json:"data"`
 	}
@@ -148,13 +148,8 @@ func (m *manager) fetchIdentity(ctx context.Context, id string) (*accountIdentit
 	return r.Data, nil
 }
 
-func fieldQuery() string {
-	q := neturl.Values{"field": accountFields}
-	return q.Encode()
-}
-
-// notFoundOr maps a 404 to errtypes.NotFound. SendAPIGetRequest gives only
-// the HTTP status in the error text.
+// notFoundOr maps a 404 to errtypes.NotFound. SendAPIGetRequest gives only the
+// HTTP status in the error text.
 func notFoundOr(err error, what string) error {
 	if strings.Contains(err.Error(), "returned 404") {
 		return errtypes.NotFound(what)
@@ -173,7 +168,7 @@ func accountOf(i *accountIdentity) (*api.Account, error) {
 	}
 	username := i.Upn
 	if i.UserType() == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
-		// The same id as parseAndCacheUser gives.
+		// The same id as parseAndCacheUser.
 		username = i.PrimaryAccountEmail
 	}
 	return &api.Account{
@@ -201,8 +196,8 @@ func accountOf(i *accountIdentity) (*api.Account, error) {
 	}, nil
 }
 
-// grappaTime parses a Grappa date-time. Grappa can omit the offset (see
-// cernboxcop user list-inactive); then the time is taken as UTC.
+// grappaTime parses a Grappa date-time. Grappa can omit the offset: then the
+// time is UTC.
 func grappaTime(s string) (*time.Time, error) {
 	if s == "" {
 		return nil, nil

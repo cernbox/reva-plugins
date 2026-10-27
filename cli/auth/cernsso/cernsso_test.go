@@ -39,9 +39,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/cli/kerberos"
 )
 
-// fakeIDP is a stand-in CERN SSO: a discovery document, an authorization
-// endpoint that takes a SPNEGO header and redirects with a code, and a
-// token endpoint that checks PKCE.
 type fakeIDP struct {
 	ts *httptest.Server
 
@@ -148,7 +145,6 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 	return idp
 }
 
-// stubTicket is a ticket of einstein@CERN.CH without a KDC.
 type stubTicket struct {
 	err    error
 	negErr error
@@ -208,8 +204,6 @@ func TestToken(t *testing.T) {
 	if !strings.Contains(idp.gotScope, "offline_access") {
 		t.Errorf("scope %q, want offline_access for a refresh token", idp.gotScope)
 	}
-	// A challenge that is not S256 of the verifier passes a lax server and
-	// fails a strict one.
 	if idp.gotVerifier == "" || challengeOf(idp.gotVerifier) != idp.gotChallenge {
 		t.Errorf("challenge %q is not S256 of the verifier %q", idp.gotChallenge, idp.gotVerifier)
 	}
@@ -283,8 +277,7 @@ func TestRefresh(t *testing.T) {
 	if tok.Value == "" || tok.Subject != "einstein" || tok.Provider != Name {
 		t.Errorf("token %+v, want a new one for einstein", tok)
 	}
-	// The IdP did not rotate it: the old one must stay, or the next refresh
-	// has nothing to send.
+	// The IdP does not rotate it: the old one must stay.
 	if tok.RefreshToken != "refresh-me" {
 		t.Errorf("refresh token %q, want the old one kept", tok.RefreshToken)
 	}
@@ -293,19 +286,21 @@ func TestRefresh(t *testing.T) {
 	}
 }
 
-// The chain of the brand finds the plugin by its name, and the provider
-// reads auth.oidc of the brand and [plugins.cern-sso] of the user config.
-func TestNew(t *testing.T) {
+func writeUserConfig(t *testing.T, conf string) {
+	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", t.TempDir())
 	if err := os.MkdirAll(filepath.Join(dir, "cbtest"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	conf := "[plugins.cern-sso]\nspn = \"HTTP/sso.example.org\"\nccache = \"/nonexistent/cc\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "cbtest", "config.toml"), []byte(conf), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestNew(t *testing.T) {
+	writeUserConfig(t, "[plugins.cern-sso]\nspn = \"HTTP/sso.example.org\"\nccache = \"/nonexistent/cc\"\n")
 	b := brand.MustParse([]byte("[program]\nname = \"cbtest\"\n[auth]\nchain = [\"cern-sso\"]\n" +
 		"[auth.oidc]\nissuer = \"https://auth.example.org/realms/x\"\nclient_id = \"cli\"\n"))
 	if !slices.Contains(cli.AuthProviders(), Name) {
@@ -330,15 +325,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNewBadConfig(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("HOME", t.TempDir())
-	if err := os.MkdirAll(filepath.Join(dir, "cbtest"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "cbtest", "config.toml"), []byte("[plugins.cern-sso]\nspm = \"x\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeUserConfig(t, "[plugins.cern-sso]\nspm = \"x\"\n")
 	b := brand.MustParse([]byte("[program]\nname = \"cbtest\"\n"))
 	p := New(cli.NewRuntime(b))
 	// A typo must not make the method vanish from the chain without a word.

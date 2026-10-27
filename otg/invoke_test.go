@@ -102,14 +102,13 @@ func TestInvocations(t *testing.T) {
 	if n := rows(t, s); n != 0 {
 		t.Fatalf("after clear the table has %d rows", n)
 	}
-	// clear is idempotent: an operator can run it without a get first
 	if _, err := s.Invoke(ctx, api.Clear, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// controlServer does what reva's control channel does on a node. That server
-// is internal to reva, so the test cannot use it.
+// controlServer does what the control channel of reva does on a node. That
+// server is internal to reva.
 type controlServer struct {
 	controlpb.UnimplementedControlServer
 }
@@ -130,10 +129,8 @@ func (controlServer) Invoke(ctx context.Context, req *controlpb.InvokeRequest) (
 	return &controlpb.InvokeResponse{ResultJson: string(b)}, nil
 }
 
-// TestOverGRPC sends an HTML message with spaces, quotes and "=" through the
-// control channel, as an operator does with
-// `reva invoke otg set number=OTG0012345 message="<b>Planned</b> intervention"`,
-// and checks that it arrives and comes back unchanged.
+// TestOverGRPC checks that an HTML message with spaces, quotes and "=" goes
+// through the control channel unchanged.
 func TestOverGRPC(t *testing.T) {
 	s := newOtg(t)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

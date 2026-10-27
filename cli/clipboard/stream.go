@@ -32,28 +32,16 @@ import (
 	"github.com/cs3org/reva/v3/pkg/cli"
 )
 
-// The live handover: "cernbox copy --stream" on one machine waits, and the
-// bytes move once "cernbox paste" runs on the other.
-//
-// They still pass through CERNBox: a laptop is behind NAT and lxplus takes
-// no inbound connections, so the server is the only path between the two.
-// What a handover saves is the storage. The sender runs a small window
-// ahead and the receiver deletes each piece as it reads it, so the slot
-// holds a few tens of megabytes whatever the size, and nothing is left on
-// the quota.
-//
-// The protocol is files, because PUT, GET, PROPFIND and DELETE are all that
-// reva gives two clients to talk. Nothing notifies, so both sides poll.
+// A live handover still passes through CERNBox, because a laptop is behind NAT
+// and lxplus takes no inbound connections. It saves the storage: the receiver
+// deletes each piece as it reads it. Nothing notifies, so both sides poll.
 
 const (
-	// streamWindow is how many pieces the sender may run ahead: enough to
-	// keep both links busy, few enough that the slot stays a pipe.
+	// streamWindow is how many pieces the sender may run ahead of the receiver.
 	streamWindow = 4
-	// streamPoll is how often each side looks for the move of the other.
-	streamPoll = 250 * time.Millisecond
+	streamPoll   = 250 * time.Millisecond
 )
 
-// streamCopy holds the source open and feeds it to whoever pastes.
 func (b *board) streamCopy(ctx context.Context, src source, opts copyOptions) error {
 	root, err := b.root(ctx)
 	if err != nil {
@@ -66,8 +54,7 @@ func (b *board) streamCopy(ctx context.Context, src source, opts copyOptions) er
 	defer body.Close()
 	chunk := b.RT.Transfer().ChunkSize
 
-	// A handover and a stored copy cannot share a slot, and the old payload
-	// would be left with no manifest.
+	// The old payload would be left with no manifest.
 	prior, priorETag, err := b.priorSlot(ctx, root, opts.slot)
 	if err != nil {
 		return err
@@ -76,7 +63,6 @@ func (b *board) streamCopy(ctx context.Context, src source, opts copyOptions) er
 	m.Mode = ModeStream
 	m.To = opts.to
 	m.Stream = &StreamInfo{ChunkSize: chunk, Window: streamWindow}
-	// The size is -1 for a pipe.
 	m.Entries = []Entry{{Name: src.name, Path: StreamDir(root, opts.slot), Size: size, Staged: true}}
 	if err := b.Mkdir(ctx, StreamDir(root, opts.slot)); err != nil {
 		return err
@@ -86,11 +72,9 @@ func (b *board) streamCopy(ctx context.Context, src source, opts copyOptions) er
 	}
 	b.discardUnreferenced(ctx, prior, m)
 
-	// From here only this process cleans up the slot, whatever the end.
 	defer b.teardownStream(root, opts.slot)
 
-	// The recipient must see the slot before this waits for them, and write
-	// in the folder of the pieces to announce themselves.
+	// The recipient must see the slot, and write in the pieces folder to arrive.
 	if opts.to != "" {
 		if err := b.shareHandover(ctx, SlotDir(root, opts.slot), opts.to, roleViewer); err != nil {
 			return err
@@ -112,8 +96,7 @@ func (b *board) streamCopy(ctx context.Context, src source, opts copyOptions) er
 	if err := b.putJSON(ctx, DonePath(root, opts.slot), Done{Parts: parts, Size: sent}); err != nil {
 		return err
 	}
-	// The last pieces may be in flight: the teardown waits for the receiver
-	// to drain them, or it would truncate the transfer.
+	// The teardown would truncate the pieces still in flight.
 	if err := b.waitForDrain(ctx, root, opts.slot, opts.wait); err != nil {
 		return err
 	}
@@ -144,7 +127,6 @@ func (b *board) openStreamSource(src source) (io.ReadCloser, int64, error) {
 	return f, info.Size(), nil
 }
 
-// waitForReader waits until somebody pastes, or the wait runs out.
 func (b *board) waitForReader(ctx context.Context, root string, m *Manifest, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for {
@@ -167,8 +149,6 @@ func (b *board) waitForReader(ctx context.Context, root string, m *Manifest, wai
 	}
 }
 
-// feedStream publishes the source a piece at a time, never more than a
-// window ahead of the receiver.
 func (b *board) feedStream(ctx context.Context, root, slot string, body io.Reader, chunk int64, wait time.Duration) (int64, int, error) {
 	buf := make([]byte, chunk)
 	var sent int64
@@ -195,8 +175,6 @@ func (b *board) feedStream(ctx context.Context, root, slot string, body io.Reade
 	}
 }
 
-// awaitWindow waits while the receiver is behind, so that a fast sender
-// does not fill the slot with the whole transfer.
 func (b *board) awaitWindow(ctx context.Context, root, slot string, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for {
@@ -216,9 +194,8 @@ func (b *board) awaitWindow(ctx context.Context, root, slot string, wait time.Du
 	}
 }
 
-// pendingChunks counts the pieces in flight. The marker of a handover is
-// in the same folder, the one place where the recipient can write: counting
-// it would keep the window one short and the drain never done.
+// pendingChunks counts the pieces in flight. It skips the reader marker of a
+// handover, which is in the same folder, or the drain would never end.
 func pendingChunks(entries []*provider.ResourceInfo) int {
 	n := 0
 	for _, e := range entries {
@@ -229,7 +206,6 @@ func pendingChunks(entries []*provider.ResourceInfo) int {
 	return n
 }
 
-// waitForDrain waits until the receiver took everything.
 func (b *board) waitForDrain(ctx context.Context, root, slot string, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
 	for {
@@ -252,9 +228,8 @@ func (b *board) waitForDrain(ctx context.Context, root, slot string, wait time.D
 	}
 }
 
-// teardownStream removes the slot when the handover is over. It has a
-// context of its own: the usual reason to be here is an interrupt, and a
-// cleanup on the cancelled context would never happen.
+// teardownStream has a context of its own: it usually runs after an interrupt,
+// and a cancelled context would stop the cleanup.
 func (b *board) teardownStream(root, slot string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -264,8 +239,6 @@ func (b *board) teardownStream(root, slot string) {
 	}
 }
 
-// streamPaste is the other side of the handover: it writes what arrives to
-// a local path or to stdout.
 func (b *board) streamPaste(ctx context.Context, root string, m *Manifest, dest string, opts pasteOptions) error {
 	if len(m.Entries) != 1 {
 		return fmt.Errorf("the %q clipboard slot is damaged: it does not name a single file", m.Slot)
@@ -275,7 +248,7 @@ func (b *board) streamPaste(ctx context.Context, root string, m *Manifest, dest 
 	if err != nil {
 		return err
 	}
-	// "I am here" releases the sender, which waits since it started.
+	// This releases the sender.
 	if err := b.PutBytes(ctx, m.ReaderPath(root), []byte(LocalOrigin(workingDir()).String()+"\n")); err != nil {
 		_ = finish(err)
 		return err
@@ -295,8 +268,8 @@ func (b *board) streamPaste(ctx context.Context, root string, m *Manifest, dest 
 	return b.JSON(m)
 }
 
-// openStreamSink is where the bytes go, and the function that closes it:
-// rename on success, remove on failure.
+// openStreamSink returns the writer and a function that closes it: rename on
+// success, remove on failure.
 func (b *board) openStreamSink(e Entry, dest string, opts pasteOptions) (io.Writer, func(error) error, error) {
 	if dest == "-" {
 		return b.Cmd.OutOrStdout(), func(error) error { return nil }, nil
@@ -311,7 +284,7 @@ func (b *board) openStreamSink(e Entry, dest string, opts pasteOptions) (io.Writ
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return nil, nil, err
 	}
-	// An interrupted handover never leaves a partial file that looks whole.
+	// An interrupted handover must not leave a partial file that looks whole.
 	part := target + ".part"
 	f, err := os.Create(part)
 	if err != nil {
@@ -328,15 +301,13 @@ func (b *board) openStreamSink(e Entry, dest string, opts pasteOptions) (io.Writ
 	return f, finish, nil
 }
 
-// drainStream consumes the pieces in order and deletes each one as it is
-// read: that gives the sender room for the next, and nothing piles up.
+// drainStream reads the pieces in order and deletes each one, to make room for
+// the next.
 //
-// A piece can be visible before it is written: the storage creates the file
-// and the bytes follow, so a receiver that polls can catch one half way.
-// Reading it would lose the rest without an error, and only the total at
-// the end would show it. So every piece is weighed first: all but the last
-// are one chunk, and the last is what the total of the done marker leaves.
-// A piece of the wrong weight is looked at again later.
+// A piece can be visible before it is fully written, and reading it would lose
+// the rest without an error. So each piece is weighed first: all but the last
+// are one chunk, and the last is what the done marker leaves. A piece of the
+// wrong size is looked at again later.
 func (b *board) drainStream(ctx context.Context, root string, m *Manifest, out io.Writer, wait time.Duration) (int64, error) {
 	slot := m.Slot
 	var chunk int64
@@ -354,11 +325,10 @@ func (b *board) drainStream(ctx context.Context, root string, m *Manifest, out i
 		body, size, err := b.Download(ctx, ChunkPath(root, slot, next))
 		switch {
 		case err == nil:
-			// A size of -1 has nothing to weigh before: the count after must do.
+			// A size of -1 cannot be weighed before: the count after must do.
 			if expect > 0 && size >= 0 && size != expect {
 				body.Close()
-				// A short piece is still being written, or is the last one, and
-				// only the done marker tells which.
+				// A short piece is still being written, or is the last one.
 				if done == nil {
 					fresh, err := b.readDone(ctx, root, slot)
 					if err != nil {
@@ -383,8 +353,6 @@ func (b *board) drainStream(ctx context.Context, root string, m *Manifest, out i
 			if err != nil {
 				return received, fmt.Errorf("receive %s: %w", slot, err)
 			}
-			// What arrived is at the destination now: a piece of the right
-			// length that gave less is the storage contradicting itself.
 			if expect > 0 && n != expect {
 				return received, fmt.Errorf("receive %s: piece %d of the stream was %d bytes but %d arrived", slot, next, expect, n)
 			}
@@ -398,8 +366,7 @@ func (b *board) drainStream(ctx context.Context, root string, m *Manifest, out i
 		case !cli.IsNotFound(err):
 			return received, err
 		}
-		// No piece yet: the sender is on it, or there will be none, which only
-		// the done marker tells.
+		// No piece yet: the sender is on it, or it is done.
 		if done, err = b.readDone(ctx, root, slot); err != nil {
 			return received, err
 		}
@@ -418,7 +385,7 @@ func (b *board) drainStream(ctx context.Context, root string, m *Manifest, out i
 	}
 }
 
-// readDone returns the end marker of the sender, nil while there is none.
+// readDone returns nil while there is no end marker.
 func (b *board) readDone(ctx context.Context, root, slot string) (*Done, error) {
 	body, _, err := b.Download(ctx, DonePath(root, slot))
 	if err != nil {
@@ -447,8 +414,7 @@ func (b *board) putJSON(ctx context.Context, p string, v any) error {
 	return b.PutBytes(ctx, p, append(data, '\n'))
 }
 
-// sleepCtx waits d, or less when the command is cancelled: Ctrl-C on a
-// waiting sender must not be a poll late.
+// sleepCtx waits d, or less when the command is cancelled.
 func sleepCtx(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()

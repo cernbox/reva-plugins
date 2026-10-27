@@ -28,161 +28,96 @@ import (
 	"time"
 )
 
-// The manifest of the cross-machine clipboard: a small file, kept in the
-// home space of the user, naming what was copied and where the bytes are.
-//
-// It is the one part of the feature that two machines have to agree on. A
-// slot written by the CLI on lxplus is read by whatever version is installed
-// on the laptop, which may be older or newer, so the encoding is versioned
-// and every field is optional except the ones a reader cannot do without.
-
 const (
-	// Dir is where the clipboard lives inside the home space. The leading dot
-	// keeps it out of an ordinary listing, since "cernbox ls" hides dot entries
-	// unless asked: a user who never touches this feature never sees it.
+	// Dir is where the clipboard lives in the home space. The leading dot
+	// hides it from "cernbox ls".
 	Dir = ".cernbox/clipboard"
 
-	// DefaultSlot is used when none is named, so that the common case is
-	// "cernbox copy" on one machine and "cernbox paste" on the other with
-	// nothing to remember in between.
+	// DefaultSlot is the slot used when none is named.
 	DefaultSlot = "default"
 
-	// Version is the manifest format version. A reader refuses anything higher
-	// rather than guessing at fields it does not know.
+	// Version is the manifest format version. A reader refuses a higher one.
 	Version = 1
 
-	// DefaultTTL is how long a slot lives before it is eligible for collection.
-	// Staged bytes sit in the user's own quota, so they cannot live forever; a
-	// week is long enough to cover "copy on Friday, paste on Monday".
+	// DefaultTTL is how long a slot lives. Staged bytes use the quota of the user.
 	DefaultTTL = 7 * 24 * time.Hour
 
-	// MaxManifestSize bounds what a reader will accept. The manifest is metadata
-	// about a handful of entries, so anything larger is corrupt or hostile, and
-	// reading it into memory unbounded would be the bug.
+	// MaxManifestSize is the most that a reader loads into memory.
 	MaxManifestSize = 1 << 20
 
 	manifestName = "manifest.json"
 	payloadName  = "payload"
 )
 
-// Mode distinguishes the two ways a slot can carry something.
-const (
-	// ModeStore is the default: the copy is on the server, and the machine that
-	// made it can go away. Paste can happen a week later.
-	ModeStore = ""
-	// ModeStream is a live handover: the sender is still running and holding the
-	// source open, and the bytes move only while the receiver is pulling them.
-	// Nothing is stored: the server holds a small window in flight and the
-	// receiver deletes each piece as it consumes it.
-	ModeStream = "stream"
-)
+// ModeStream marks a live handover. A stored copy has an empty mode.
+const ModeStream = "stream"
 
-// Manifest is what one clipboard slot holds.
+// Manifest is what one clipboard slot holds. Machines of different versions
+// read the same file, so all fields are optional except the ones in Decode.
 type Manifest struct {
-	// Version is the format version this was written with.
-	Version int `json:"version"`
-	// Slot is the slot name, repeated inside the file so a manifest read on its
-	// own still says where it belongs.
-	Slot string `json:"slot"`
-	// Mode is ModeStore or ModeStream. It is omitted for a stored copy so that
-	// the ordinary manifest is unchanged.
+	Version int    `json:"version"`
+	Slot    string `json:"slot"`
+	// Mode is ModeStream for a live handover. It is omitted for a stored copy.
 	Mode string `json:"mode,omitempty"`
-	// Stream describes a live handover, and is present only in ModeStream.
-	Stream *StreamInfo `json:"stream,omitempty"`
-	// Created is when the copy was made.
-	Created time.Time `json:"created"`
-	// Expires is when the slot becomes eligible for collection. Zero means it
-	// never expires, which is what --ttl 0 asks for.
+	// Stream is set only in ModeStream.
+	Stream  *StreamInfo `json:"stream,omitempty"`
+	Created time.Time   `json:"created"`
+	// Expires is zero when the slot never expires (--ttl 0).
 	Expires time.Time `json:"expires,omitzero"`
-	// Origin records the machine that did the copying.
-	Origin Origin `json:"origin"`
-	// To is the user this was staged for, empty for an ordinary copy. It is
-	// written so that a slot says who can read it without the reader having to
-	// take the slot's name apart.
+	Origin  Origin    `json:"origin"`
+	// To is the user this was staged for, empty for an ordinary copy.
 	To string `json:"to,omitempty"`
-	// Entries are what was copied, in the order the arguments were given.
+	// Entries are in the order of the arguments.
 	Entries []Entry `json:"entries"`
 }
 
 // Entry is one copied file or directory.
 type Entry struct {
-	// Name is what the entry is called, and what it is pasted as.
+	// Name is what paste writes the entry as.
 	Name string `json:"name"`
-	// Path is the absolute CERNBox path where the bytes are. For a staged entry
-	// that is inside the slot's own payload directory; for a referenced one it is
-	// wherever the file already lived.
-	Path string `json:"path"`
-	// IsDir reports whether this is a directory.
-	IsDir bool `json:"is_dir"`
-	// Size is the byte count, recursive for a directory.
+	// Path is the absolute CERNBox path of the bytes.
+	Path  string `json:"path"`
+	IsDir bool   `json:"is_dir"`
+	// Size is recursive for a directory.
 	Size int64 `json:"size"`
-	// Staged reports whether the CLI uploaded these bytes for the clipboard.
-	//
-	// This is the difference between the two kinds of copy, and it matters on
-	// paste as much as on clear. A staged entry is a private duplicate that
-	// clearing the slot should delete; a referenced one is the user's actual
-	// file, which clearing must leave alone.
+	// Staged is true when the CLI uploaded the bytes. Clear deletes a staged
+	// entry and leaves a referenced one alone: that is the real file of the user.
 	Staged bool `json:"staged"`
-	// Parts is how many pieces the entry was split into, and zero when it is a
-	// single object at Path, which is every entry except a stream too large to
-	// send in one request.
-	//
-	// When it is non-zero, Path is a directory and the pieces are the files
-	// PartPath names, to be joined in order. Splitting is what lets a pipe be
-	// copied at all: its length cannot be known in advance, and every way of
-	// sending bytes to reva needs the length up front, so the stream is cut into
-	// lengths that are known by the time each piece is sent.
+	// Parts is the number of pieces of a piped entry, zero for a single object.
+	// Then Path is a directory, and PartPath names the pieces to join in order.
+	// A pipe has no length, and every upload to reva needs one, so a pipe is
+	// cut in pieces whose length is known when each is sent.
 	Parts int `json:"parts,omitempty"`
-	// ETag identifies the version that was copied. On a referenced entry it is
-	// how paste can tell that the source has changed since, which is worth
-	// saying out loud rather than silently handing over different bytes.
+	// ETag is the version that was copied from a referenced path.
 	ETag string `json:"etag,omitempty"`
 }
 
-// StreamInfo describes a handover that is happening now rather than something
-// sitting on the server.
-//
-// The sender writes it, blocks until a receiver claims the slot, and then feeds
-// pieces through a window this size. The receiver deletes each piece as it reads
-// it, so what the server holds at any moment is bounded by Window pieces rather
-// than by the size of whatever is being sent: a hundred gigabytes can cross
-// through a slot that never holds more than a few dozen megabytes.
+// StreamInfo describes a live handover. The sender runs at most Window pieces
+// ahead of the receiver, so the slot stays small whatever the size sent.
 type StreamInfo struct {
-	// ChunkSize is how much of the stream travels in each piece.
 	ChunkSize int64 `json:"chunk_size"`
-	// Window is how many pieces the sender will run ahead of the receiver. It is
-	// what stops a fast sender from turning the slot into storage after all.
-	Window int `json:"window"`
+	Window    int   `json:"window"`
 }
 
-// Done is what the sender writes when the source is exhausted, so the receiver
-// can tell "no more pieces yet" from "no more pieces ever".
+// Done is the end marker of the sender. The receiver needs it to tell "no more
+// pieces yet" from "no more pieces ever".
 type Done struct {
-	// Parts is how many pieces were sent in total.
-	Parts int `json:"parts"`
-	// Size is the total number of bytes, for the receiver to check against.
-	Size int64 `json:"size"`
+	Parts int   `json:"parts"`
+	Size  int64 `json:"size"`
 }
 
-// IsStream reports whether the slot is a live handover rather than a stored copy.
+// IsStream reports whether the slot is a live handover.
 func (m *Manifest) IsStream() bool { return m.Mode == ModeStream }
 
 // Origin is the machine a copy was made on.
-//
-// It is recorded because a clipboard shared between every machine an account
-// touches is otherwise ambiguous: "default holds report.pdf" is far less useful
-// than knowing it was put there from lxplus812 twenty minutes ago.
 type Origin struct {
 	Host string `json:"host,omitempty"`
 	User string `json:"user,omitempty"`
-	// Dir is the working directory the copy was made from, which is often the
-	// only thing that distinguishes two files of the same name.
+	// Dir is often the only thing that tells two files of one name apart.
 	Dir string `json:"dir,omitempty"`
 }
 
-// LocalOrigin describes the machine this process is running on. Every field is
-// best effort: none of them is load-bearing, and a hostname that cannot be read
-// is not a reason to refuse to copy a file.
+// LocalOrigin describes this machine. A field that cannot be read stays empty.
 func LocalOrigin(cwd string) Origin {
 	var o Origin
 	if host, err := os.Hostname(); err == nil {
@@ -209,8 +144,7 @@ func (o Origin) String() string {
 	}
 }
 
-// NewManifest returns a manifest for slot, expiring after ttl. A ttl of zero or less
-// means no expiry.
+// NewManifest returns a manifest for slot. A ttl of zero or less means no expiry.
 func NewManifest(slot string, now time.Time, ttl time.Duration, origin Origin) *Manifest {
 	m := &Manifest{
 		Version: Version,
@@ -224,7 +158,7 @@ func NewManifest(slot string, now time.Time, ttl time.Duration, origin Origin) *
 	return m
 }
 
-// Size is the total size of everything in the slot.
+// Size is the total size of the entries.
 func (m *Manifest) Size() int64 {
 	var total int64
 	for _, e := range m.Entries {
@@ -233,8 +167,7 @@ func (m *Manifest) Size() int64 {
 	return total
 }
 
-// StagedSize is how much of the slot is a duplicate the CLI made, and therefore
-// how much quota clearing it would return.
+// StagedSize is the size of the uploaded copies, which clearing the slot frees.
 func (m *Manifest) StagedSize() int64 {
 	var total int64
 	for _, e := range m.Entries {
@@ -245,7 +178,7 @@ func (m *Manifest) StagedSize() int64 {
 	return total
 }
 
-// HasStaged reports whether any bytes were uploaded for this slot.
+// HasStaged reports whether any entry was uploaded.
 func (m *Manifest) HasStaged() bool {
 	for _, e := range m.Entries {
 		if e.Staged {
@@ -260,16 +193,6 @@ func (m *Manifest) Expired(now time.Time) bool {
 	return !m.Expires.IsZero() && now.After(m.Expires)
 }
 
-// Find returns the entry with the given name.
-func (m *Manifest) Find(name string) (Entry, bool) {
-	for _, e := range m.Entries {
-		if e.Name == name {
-			return e, true
-		}
-	}
-	return Entry{}, false
-}
-
 // Encode renders the manifest for storage.
 func (m *Manifest) Encode() ([]byte, error) {
 	if m.Version == 0 {
@@ -282,11 +205,9 @@ func (m *Manifest) Encode() ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// Decode parses a stored manifest.
-//
-// A manifest from a newer CLI is refused rather than read as far as it parses:
-// the fields this version does not know about could be the ones saying where
-// the bytes are, and pasting half of a copy is worse than declining to.
+// Decode parses a stored manifest. It refuses a newer format: the fields that
+// this version does not know could say where the bytes are, and pasting half
+// of a copy is worse than refusing.
 func Decode(b []byte) (*Manifest, error) {
 	if len(b) == 0 {
 		return nil, fmt.Errorf("the clipboard manifest is empty")
@@ -311,12 +232,9 @@ func Decode(b []byte) (*Manifest, error) {
 	return &m, nil
 }
 
-// ValidateSlot checks a slot name.
-//
-// A slot becomes a directory name under the clipboard root, so a name with a
-// separator or a dot-dot in it would write outside the clipboard entirely. This
-// is the only place that is checked, so it is deliberately strict rather than
-// clever: names are one plain segment.
+// ValidateSlot checks a slot name. A slot is a directory name under the
+// clipboard root, so a separator or a dot-dot would write outside it. This is
+// the only check, so it only allows one plain segment.
 func ValidateSlot(name string) error {
 	const maxLen = 64
 	switch {
@@ -341,20 +259,15 @@ func ValidateSlot(name string) error {
 	return nil
 }
 
-// HandoverPrefix marks a slot staged for somebody else rather than for another
-// of your own machines.
-//
-// A handover gets a slot of its own, named after the recipient, and never the
-// default one. The slot directory is shared with them, so anything in it is
-// theirs to read: putting a handover in the slot the rest of your copies go to
-// would hand over the next thing you copied as well.
+// HandoverPrefix starts the name of a slot staged for somebody else. That slot
+// is shared with them, so it is never the default slot: they would also read
+// the next thing copied there.
 const HandoverPrefix = "to-"
 
 // HandoverSlot is the slot a handover to user is staged in.
 func HandoverSlot(user string) string { return HandoverPrefix + user }
 
-// HandoverRecipient reports who a slot was staged for, and whether it is a
-// handover at all.
+// HandoverRecipient reports who a slot was staged for, if it is a handover.
 func HandoverRecipient(slot string) (string, bool) {
 	rest, ok := strings.CutPrefix(slot, HandoverPrefix)
 	if !ok || rest == "" {
@@ -372,28 +285,15 @@ func ManifestPath(root, slot string) string { return path.Join(root, slot, manif
 // PayloadDir is where bytes staged for a slot are stored.
 func PayloadDir(root, slot string) string { return path.Join(root, slot, payloadName) }
 
-// IsManifest reports whether name is the manifest file, so a listing of a slot
-// can tell metadata from payload.
-func IsManifest(name string) bool { return name == manifestName }
-
-// PartPath returns where the n-th piece of a split entry is stored, given the
-// entry's Path.
-//
-// The pieces sit inside a directory of their own rather than alongside each other
-// under suffixed names, so that releasing them is one recursive delete instead of
-// one request per piece, which for a large stream is the difference between a
-// single request and thousands.
-//
-// The number is zero-padded so that a plain listing of the directory is in the
-// order the pieces have to be joined, which is what makes a half-finished stream
-// something a person can look at and understand.
+// PartPath returns where the n-th piece of an entry with parts is stored. The
+// number is zero-padded, so a listing is in the order of the join. The pieces
+// have a directory of their own, so one recursive delete releases them all.
 func PartPath(base string, n int) string {
 	return path.Join(base, fmt.Sprintf("%05d", n))
 }
 
-// Layout of a live handover. These are the only things the two machines say to
-// each other, and every one of them is a plain file, because PUT, GET, PROPFIND
-// and DELETE are the whole vocabulary reva gives two clients for talking.
+// The two machines of a live handover talk only through plain files: PUT, GET,
+// PROPFIND and DELETE are all that reva gives two clients.
 const (
 	streamName = "stream"
 	readerName = "reader"
@@ -404,11 +304,9 @@ const (
 func StreamDir(root, slot string) string { return path.Join(root, slot, streamName) }
 
 // ChunkPath is the n-th piece in flight.
-func ChunkPath(root, slot string, n int) string {
-	return path.Join(StreamDir(root, slot), fmt.Sprintf("%05d", n))
-}
+func ChunkPath(root, slot string, n int) string { return PartPath(StreamDir(root, slot), n) }
 
-// ChunkIndex recovers a piece's number from its name, reporting false for
+// ChunkIndex recovers a piece number from its name, and reports false for
 // anything else in the directory.
 func ChunkIndex(name string) (int, bool) {
 	if len(name) != 5 {
@@ -424,34 +322,15 @@ func ChunkIndex(name string) (int, bool) {
 	return n, true
 }
 
-// ReaderPath is how the receiver says it has arrived. The sender blocks until
-// this exists, which is what makes copy wait rather than upload.
-func ReaderPath(root, slot string) string { return path.Join(root, slot, readerName) }
-
-// ScratchReaderPath is the arrival marker for a handover, inside the one
-// directory the recipient can write in.
-func ScratchReaderPath(root, slot string) string {
-	return path.Join(StreamDir(root, slot), readerName)
-}
-
-// ReaderPath is where this manifest's receiver announces itself, which depends
-// on who the receiver is.
-//
-// Another of your own machines writes the marker at the top of the slot. Someone
-// else cannot: a handover shares the slot read-only, and only the pieces
-// directory is writable by them, precisely so that the manifest and everything
-// else stays theirs to read and nothing more. So their marker goes in there,
-// next to the pieces.
-//
-// Both sides read this from the same manifest, so there is no negotiation and
-// nothing to get out of step.
+// ReaderPath is the marker with which the receiver says that it has arrived.
+// The sender waits for it. A handover shares the slot read-only and only the
+// pieces directory is writable by the recipient, so their marker goes there.
 func (m *Manifest) ReaderPath(root string) string {
 	if m.To != "" {
-		return ScratchReaderPath(root, m.Slot)
+		return path.Join(StreamDir(root, m.Slot), readerName)
 	}
-	return ReaderPath(root, m.Slot)
+	return path.Join(root, m.Slot, readerName)
 }
 
-// DonePath is how the sender says the source is exhausted. Without it the
-// receiver could not tell a pause in a slow stream from the end of it.
+// DonePath is the end marker of the sender.
 func DonePath(root, slot string) string { return path.Join(root, slot, doneName) }

@@ -26,9 +26,8 @@ type setInfoArgs struct {
 	ResourceAdmins          *string `arg:"resource_admins" help:"the resource admins group"`
 }
 
-// The invocation is Shared because all the instances use the same table.
-// It needs no flush_cache: the cached project list of the CS3 calls does
-// not show these columns.
+// The invocation is shared: all the instances use the same table. It needs no
+// flush_cache, because the cached project list does not show these columns.
 func (c *Catalogue) registerInvocations() {
 	c.invocations = invoke.NewSet()
 	c.invocations.Add("set_info", "Set the CERN columns of a project: service account, ticket, backup name, capacity, use case, comments, resource admins.").
@@ -36,8 +35,7 @@ func (c *Catalogue) registerInvocations() {
 		Handle(invoke.Typed(c.setInfo))
 }
 
-// Invocations implements invoke.Invokable: the spacesregistry publishes them
-// as driver.*.
+// Invocations implements invoke.Invokable.
 func (c *Catalogue) Invocations() []invoke.InvocationSpec {
 	return c.invocations.Invocations()
 }
@@ -87,7 +85,6 @@ func (c *Catalogue) setInfo(ctx context.Context, a setInfoArgs) (invoke.Result, 
 	return invoke.ProtoResult(&adminpb.AdminSpace{Space: r.Space, Status: string(r.Status), Extra: r.Extra})
 }
 
-// audit uses the action and the target of the spacesregistry invocations.
 func audit(ctx context.Context, target string, err error, fields map[string]string) {
 	u, _ := appctx.ContextGetUser(ctx)
 	admin.Audit(ctx, admin.AuditEvent{

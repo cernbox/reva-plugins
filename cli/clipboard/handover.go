@@ -31,19 +31,6 @@ import (
 	"github.com/cs3org/reva/v3/pkg/permissions"
 )
 
-// The clipboard between two people: "cernbox copy --to marie" on one
-// account, "cernbox paste --from einstein" on the other. A handover is a
-// slot shared with the recipient:
-//
-//   - The slot is named after the recipient, never the default one: the
-//     whole folder is readable by them, so a handover in the slot of the other
-//     copies would also hand over the next thing copied.
-//   - All is staged into the slot, also the CERNBox paths that a copy only
-//     points at: the recipient cannot read a path of the sender, and the
-//     server copies it without the bytes passing through here.
-//   - The recipient reads the paths of the sender, which the share allows,
-//     and nothing else: the parents of the slot stay closed.
-
 type role int
 
 const (
@@ -58,8 +45,7 @@ func (r role) permissions() *provider.ResourcePermissions {
 	return permissions.NewViewerRole().CS3ResourcePermissions()
 }
 
-// handoverSlotFor is the slot of a copy for user. It refuses --slot, which
-// would share more than the caller meant to.
+// handoverSlotFor refuses --slot, which would share more than the caller meant.
 func handoverSlotFor(user string, slotGiven bool) (string, error) {
 	if strings.TrimSpace(user) == "" {
 		return "", cli.Usagef("--to needs a username")
@@ -80,9 +66,7 @@ func sharedWith(s *collaboration.Share, user string) bool {
 	return g.GetType() == provider.GranteeType_GRANTEE_TYPE_USER && strings.EqualFold(g.GetUserId().GetOpaqueId(), user)
 }
 
-// shareHandover gives user the folder dir with the role r, unless they
-// have it. A stored handover is viewer only; a live one is also editor on
-// the folder of the pieces, the one thing that the far end must write.
+// shareHandover gives user the folder dir with the role r, unless they have it.
 func (b *board) shareHandover(ctx context.Context, dir, user string, r role) error {
 	info, err := b.Stat(ctx, dir)
 	if err != nil {
@@ -91,8 +75,7 @@ func (b *board) shareHandover(ctx context.Context, dir, user string, r role) err
 	if info.GetId() == nil {
 		return fmt.Errorf("sharing %s: the server reported no resource id for it", dir)
 	}
-	// A second copy to the same person reuses the share: sharing again is an
-	// error on some servers and a duplicate on others.
+	// Sharing again is an error on some servers and a duplicate on others.
 	if shares, err := b.B.Shares().List(ctx, info.Id); err == nil {
 		for _, s := range shares {
 			if sharedWith(s, user) {
@@ -114,17 +97,14 @@ func (b *board) shareHandover(ctx context.Context, dir, user string, r role) err
 }
 
 // unshareHandover takes back the grants of a handover before its slot is
-// removed. A share outlives its path: it follows the folder to the trash
-// and stays in the share list for ever, naming a path in the recycle bin.
-// Failures are warnings: the caller is removing the slot, and must not
-// leave the payload behind because a share could not be tidied.
+// removed, or the share would follow the folder to the trash. Failures are only
+// warnings, so that the payload is not left behind.
 func (b *board) unshareHandover(ctx context.Context, root, slot string) {
 	user, ok := HandoverRecipient(slot)
 	if !ok {
 		return
 	}
-	// Both folders: a live handover shares the pieces too, and nothing else
-	// ever looks at that path again.
+	// A live handover also shares the pieces folder.
 	for _, dir := range []string{StreamDir(root, slot), SlotDir(root, slot)} {
 		b.revokeAccess(ctx, dir, user)
 	}
@@ -149,21 +129,16 @@ func (b *board) revokeAccess(ctx context.Context, dir, user string) {
 	}
 }
 
-// incoming is a handover found in the received shares of the caller.
 type incoming struct {
-	// root is the clipboard root of the sender, which the paths of the
-	// manifest hang off.
-	root string
-	// shareID is the received share, the only id that hides it.
+	// root is the clipboard root of the sender.
+	root    string
 	shareID string
 	hidden  bool
 }
 
-// handovers are the slots named slot that were shared with the caller, by
-// sender, or by anybody when sender is empty. They are found through the
-// received shares, not by a path built from the name of the sender: that
-// would be an attempt to read their home, and the share is what says that
-// they really handed it over.
+// handovers returns the slots named slot that were shared with the caller by
+// sender, or by anybody when sender is empty. It uses the received shares and
+// not a path built from the name of the sender: the share proves the handover.
 func (b *board) handovers(ctx context.Context, sender, slot string) ([]incoming, []string, error) {
 	recvd, err := b.B.Shares().Received(ctx)
 	if err != nil {
@@ -187,8 +162,6 @@ func (b *board) handovers(ctx context.Context, sender, slot string) ([]incoming,
 	return out, from, nil
 }
 
-// senderClipboard is the clipboard of somebody who handed something to the
-// caller.
 func (b *board) senderClipboard(ctx context.Context, sender, slot string) (incoming, error) {
 	found, _, err := b.handovers(ctx, sender, slot)
 	if err != nil {
@@ -201,10 +174,9 @@ func (b *board) senderClipboard(ctx context.Context, sender, slot string) (incom
 	return found[0], nil
 }
 
-// hideHandover takes a collected handover out of the share listings of the
-// recipient, and of the web interface, where it would be a share to accept
-// that means nothing. It cannot be created hidden: the flag is on the copy
-// of the recipient. Hiding grants and revokes nothing.
+// hideHandover takes a collected handover out of the share list of the
+// recipient. It cannot be created hidden: the flag is on the copy of the
+// recipient.
 func (b *board) hideHandover(ctx context.Context, in incoming) {
 	if in.shareID == "" || in.hidden {
 		return
@@ -214,10 +186,8 @@ func (b *board) hideHandover(ctx context.Context, in incoming) {
 	}
 }
 
-// incomingHandovers are the slots that others shared with the caller, with
-// the manifest read from the space of the sender. A share whose slot has no
-// manifest (not written yet, or cleared) is skipped: the share outlives the
-// copy.
+// incomingHandovers skips a share whose slot has no manifest: the share
+// outlives the copy.
 func (b *board) incomingHandovers(ctx context.Context) []slotView {
 	me := b.Username(ctx)
 	if me == "" {
@@ -239,7 +209,6 @@ func (b *board) incomingHandovers(ctx context.Context) []slotView {
 	return out
 }
 
-// streamPeer names who the sender waits for.
 func (b *board) streamPeer(ctx context.Context, opts copyOptions) string {
 	if opts.to != "" {
 		return fmt.Sprintf("%s to run '%s paste --from %s'", opts.to, b.RT.Name(), b.Username(ctx))

@@ -30,40 +30,33 @@ func (plugin) RevaPlugin() reva.PluginInfo {
 	}
 }
 
-// Catalogue adds the CERN columns to the extra of each record of the Admin
-// API. The users of the CS3 calls do not see them.
+// Catalogue adds the CERN columns to the extra of each record of the Admin API.
 type Catalogue struct {
 	*sql.ProjectsManager
 	db          *gorm.DB
 	invocations *invoke.Set
 }
 
-// columns are the CERN columns of the projects table. The types are those
-// of the reva model that had them, so that both describe the same table.
+// columns are the CERN columns of the projects table.
 type columns struct {
-	SpaceID        string `gorm:"size:255"`
-	ResourceAdmins string
-	// The use case given in the ticket that asked for the project.
+	SpaceID                 string `gorm:"size:255"`
+	ResourceAdmins          string
 	UserProvidedDescription string
 	ServiceAccount          string
-	// Notes for the second and third level support.
-	Comments   string
-	SnowTicket string
-	// The name in the backup system: the project name and a salt.
-	BackupName           string `gorm:"size:255"`
-	InitialCapacityBytes uint64
+	Comments                string
+	SnowTicket              string
+	BackupName              string `gorm:"size:255"`
+	InitialCapacityBytes    uint64
 }
 
 func (columns) TableName() string { return "projects" }
 
-// fields are the columns, by the field name that gorm migrates.
 var fields = []string{"ResourceAdmins", "UserProvidedDescription", "ServiceAccount", "Comments", "SnowTicket", "BackupName", "InitialCapacityBytes"}
 
-// lookupChunk keeps the IN lists of a long list below the variable limit of
-// sqlite.
+// lookupChunk keeps the IN lists below the variable limit of sqlite.
 const lookupChunk = 500
 
-// New takes the configuration of the sql catalogue.
+// New returns the catalogue, with the configuration of the sql catalogue.
 func New(ctx context.Context, m map[string]any) (projects.Catalogue, error) {
 	cat, err := sql.New(ctx, m)
 	if err != nil {
@@ -74,8 +67,8 @@ func New(ctx context.Context, m map[string]any) (projects.Catalogue, error) {
 		return nil, fmt.Errorf("cernbox: the sql catalogue is a %T", cat)
 	}
 	db := pm.DB()
-	// Only a missing column is added: an AutoMigrate could alter the
-	// columns that the production table has already.
+	// Add only the missing columns: an AutoMigrate could alter the columns
+	// that the production table has.
 	mig := db.Migrator()
 	for _, f := range fields {
 		if mig.HasColumn(&columns{}, f) {
@@ -134,8 +127,7 @@ func (c *Catalogue) SetProjectOwner(ctx context.Context, ref projects.Ref, owner
 	return c.withExtra(ctx, r, err)
 }
 
-// RegisterProject implements projects.Admin. The CERN columns of a new
-// project are empty: driver.set_info sets them.
+// RegisterProject implements projects.Admin.
 func (c *Catalogue) RegisterProject(ctx context.Context, r projects.Registration) (*projects.Record, error) {
 	rec, err := c.ProjectsManager.RegisterProject(ctx, r)
 	return c.withExtra(ctx, rec, err)
@@ -147,8 +139,8 @@ func (c *Catalogue) UnregisterProject(ctx context.Context, ref projects.Ref, har
 		r, err := c.ProjectsManager.UnregisterProject(ctx, ref, hard)
 		return c.withExtra(ctx, r, err)
 	}
-	// A hard delete removes the row, so the columns are read before. A name
-	// can select one of several rows, thus all of them are read.
+	// A hard delete removes the row, so read the columns before. A name can
+	// select several rows.
 	var cols map[string]columns
 	var err error
 	if ref.SpaceID != "" {
@@ -167,7 +159,6 @@ func (c *Catalogue) UnregisterProject(ctx context.Context, ref projects.Ref, har
 	return r, nil
 }
 
-// withExtra takes the results of a call of the sql catalogue.
 func (c *Catalogue) withExtra(ctx context.Context, r *projects.Record, err error) (*projects.Record, error) {
 	if err != nil {
 		return nil, err
@@ -180,8 +171,8 @@ func (c *Catalogue) withExtra(ctx context.Context, r *projects.Record, err error
 	return r, nil
 }
 
-// load returns the columns of the rows that match, by space id. The model
-// has no DeletedAt, so the soft-deleted rows match too.
+// load returns the columns of the rows that match, by space id. The soft-deleted
+// rows match too.
 func (c *Catalogue) load(ctx context.Context, query string, args ...any) (map[string]columns, error) {
 	var rows []columns
 	if err := c.db.WithContext(ctx).Where(query, args...).Find(&rows).Error; err != nil {
@@ -194,8 +185,6 @@ func (c *Catalogue) load(ctx context.Context, query string, args ...any) (map[st
 	return out, nil
 }
 
-// addExtra uses the keys of the reva model that had the columns, so that
-// the results do not change when the columns leave it.
 func addExtra(r *projects.Record, cols map[string]columns) {
 	col, ok := cols[spaceID(r.Space.GetId().GetOpaqueId())]
 	if !ok {
@@ -221,8 +210,8 @@ func addExtra(r *projects.Record, cols map[string]columns) {
 	}
 }
 
-// spaceID returns the space id of the catalogue from a CS3 space id, which
-// is <storage id>$<space id>.
+// spaceID returns the space id of the catalogue from a CS3 space id, which is
+// <storage id>$<space id>.
 func spaceID(id string) string {
 	if _, s, ok := strings.Cut(id, "$"); ok {
 		return s

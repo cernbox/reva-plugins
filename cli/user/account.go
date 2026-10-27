@@ -16,8 +16,8 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-// Package user is the CLI plugin `user account`: it shows a CERN account
-// from Grappa through the driver.account invocation of the userprovider.
+// Package user is the user account CLI plugin. It shows a CERN account from
+// Grappa.
 package user
 
 import (
@@ -55,8 +55,8 @@ func New(rt *cli.Runtime) *cobra.Command {
 	return cli.AdminCommand(cmd)
 }
 
-// rows always has the type, the owner and the state of the account, and the
-// other fields only if Grappa has a value.
+// rows skips the fields that Grappa has no value for. The account type, the
+// owner and the state are always there.
 func rows(a *api.Account) [][]string {
 	var r [][]string
 	add := func(k, v string, always bool) {

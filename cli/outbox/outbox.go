@@ -19,9 +19,6 @@
 // Package outbox is the command outbox of the cernbox CLI: a local folder
 // whose arrivals go up to CERNBox, such as the folder of the screenshots.
 // It is one way: nothing in CERNBox changes except by adding to it.
-//
-// The folders are [plugins.outbox] folders of the config files, the outbox
-// list of cernbox-cli. The commands use Runtime.Backend and Runtime.Data.
 package outbox
 
 import (
@@ -59,10 +56,8 @@ const (
 	// defaultSweep is how often a watch looks through the folders anyway,
 	// behind the notifications, for what they miss.
 	defaultSweep = time.Minute
-	// settleCheck is how often the files that had events are looked at.
-	settleCheck = time.Second
-	// uploadedDir is where --after move puts a file once it is up.
-	uploadedDir = ".uploaded"
+	settleCheck  = time.Second
+	uploadedDir  = ".uploaded"
 )
 
 // Config is the section [plugins.outbox].
@@ -90,7 +85,7 @@ type Folder struct {
 	Exec string `toml:"exec"`
 }
 
-// configOf decodes [plugins.outbox] of the config files. Tests replace it.
+// configOf is a variable so that tests can replace it.
 var configOf = func(rt *cli.Runtime) (Config, error) {
 	var c Config
 	err := cli.PluginConfig(rt, Name, &c)
@@ -146,8 +141,6 @@ func open(cmd *cobra.Command, rt *cli.Runtime) (*box, error) {
 	return &box{s}, nil
 }
 
-// jobs are the folders to act on: the one of the command line, or those of
-// the config.
 func (b *box) jobs(args []string, fl flags) ([]job, error) {
 	if len(args) == 1 {
 		if fl.to == "" {
@@ -268,13 +261,12 @@ func watchCmd(rt *cli.Runtime) *cobra.Command {
 	return cli.Mutates(cmd)
 }
 
-// watch uploads as files appear. The file system says when, so that a
-// folder of thousands of screenshots is not read through every few seconds.
-// The notifications are not enough alone: the kernel drops them when its
-// queue overflows, network file systems often send none, and what was there
-// before the watch was never announced. The sweep turns "never uploaded"
-// into "uploaded a minute late". The settle wait is apart: a notification
-// says that a file exists, not that its writer finished.
+// watch uploads as files appear. The file system says when, so a big folder
+// is not read every few seconds. The notifications are not enough alone: the
+// kernel drops them when its queue overflows, network file systems often
+// send none, and files from before the watch were never announced. The sweep
+// catches those. The settle wait is separate: a notification says that a
+// file exists, not that its writer finished.
 func (b *box) watch(ctx context.Context, jobs []job, settle, sweep time.Duration) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -287,7 +279,7 @@ func (b *box) watch(ctx context.Context, jobs []job, settle, sweep time.Duration
 			}
 		}
 	}
-	// Nil channels are never ready: a failed watcher leaves the work to the
+	// Nil channels are never ready, so a failed watcher leaves the work to the
 	// timers.
 	var events chan fsnotify.Event
 	var errs chan error
@@ -306,8 +298,7 @@ func (b *box) watch(ctx context.Context, jobs []job, settle, sweep time.Duration
 		case <-ctx.Done():
 			return nil
 		case ev := <-events:
-			// A file that arrives by rename is a Create, one being written a
-			// Write; removals need nothing.
+			// A rename into the folder is a Create. A file being written is a Write.
 			if ev.Op&(fsnotify.Create|fsnotify.Write) != 0 && !userplane.SkipName(filepath.Base(ev.Name)) {
 				pending[ev.Name] = true
 			}
@@ -331,8 +322,8 @@ func (b *box) watch(ctx context.Context, jobs []job, settle, sweep time.Duration
 	}
 }
 
-// sweep makes a pass over every folder and reports the failures: a watch
-// that exits on the first bad file is not running when it matters.
+// sweep warns about failures instead of returning them, so that one bad file
+// does not stop the watch.
 func (b *box) sweep(ctx context.Context, jobs []job, settle time.Duration) {
 	for _, j := range jobs {
 		if got, err := b.run(ctx, j, settle); err != nil {
@@ -344,7 +335,7 @@ func (b *box) sweep(ctx context.Context, jobs []job, settle time.Duration) {
 }
 
 // tryPending uploads a file that had an event, once it stopped changing. It
-// reports whether the file is done with: sent, or gone.
+// reports whether the file is done with: sent or gone.
 func (b *box) tryPending(ctx context.Context, jobs []job, p string, settle time.Duration) (bool, error) {
 	i := slices.IndexFunc(jobs, func(j job) bool { return j.local == filepath.Dir(p) })
 	if i < 0 {
@@ -433,7 +424,6 @@ func statusCmd(rt *cli.Runtime) *cobra.Command {
 	return cmd
 }
 
-// job is one folder, checked.
 type job struct {
 	local, remote, layout, after string
 	link                         bool
@@ -464,8 +454,8 @@ func newJob(f Folder) (job, error) {
 
 type scanResult struct {
 	items []item
-	// dirs are subfolders, which an outbox does not upload: said, because
-	// somebody who dropped a folder in would believe it sent.
+	// dirs counts the subfolders, which an outbox does not upload. The user is
+	// told, because somebody who dropped a folder in would believe it sent.
 	dirs int
 }
 
@@ -476,8 +466,8 @@ type item struct {
 	settled    bool
 }
 
-// remoteFor is where a file goes. The date layout takes the date of the
-// file: a screenshot belongs to the day it was taken.
+// remoteFor is where a file goes. The date layout uses the date of the file,
+// not of the upload.
 func (j job) remoteFor(it item) string {
 	if j.layout == "date" {
 		d := it.modified
@@ -486,10 +476,8 @@ func (j job) remoteFor(it item) string {
 	return path.Join(j.remote, it.name)
 }
 
-// scan lists the folder and marks the files that stopped changing: a file
-// being written keeps its modification time current, so one stat tells, and
-// nothing is remembered between runs. An outbox is one folder deep: the
-// folders that people drop things into are flat.
+// scan lists the folder one level deep. A file being written keeps its
+// modification time current, so one stat tells if it settled.
 func scan(j job, settle time.Duration, now time.Time) (scanResult, error) {
 	entries, err := os.ReadDir(j.local)
 	if err != nil {
@@ -558,14 +546,12 @@ func (r result) json() map[string]any {
 	return map[string]any{"uploaded": r.uploaded, "skipped": r.skipped, "pending": r.pending, "failed": r.failed, "bytes": r.bytes}
 }
 
-// run makes one pass over one folder.
 func (b *box) run(ctx context.Context, j job, settle time.Duration) (result, error) {
 	var res result
 	sc, err := scan(j, settle, time.Now())
 	if err != nil {
-		// A configured folder that is not there (a drive not mounted this
-		// morning) must not stop the others, least of all in a timer. One of
-		// the command line is a typo, and saying so is the answer.
+		// A missing configured folder (a drive not mounted) must not stop the
+		// others. One of the command line is a typo, so that is an error.
 		if j.configured && errors.Is(err, fs.ErrNotExist) {
 			b.Warn("skipping %s: %v", j.local, userplane.ErrLine(err))
 			return res, nil
@@ -594,9 +580,8 @@ func (b *box) run(ctx context.Context, j job, settle time.Duration) (result, err
 	return res, nil
 }
 
-// alreadyThere reports whether the destination holds the file. Size and not
-// content, as sync does: reading every byte on both sides to decide whether
-// to read every byte saves nothing.
+// alreadyThere reports whether the destination holds the file. It compares
+// sizes, not content, as sync does.
 func (b *box) alreadyThere(ctx context.Context, j job, it item) (bool, error) {
 	remote, err := b.RT.RemotePath(ctx, j.remoteFor(it))
 	if err != nil {
@@ -612,8 +597,8 @@ func (b *box) alreadyThere(ctx context.Context, j job, it item) (bool, error) {
 	return !userplane.IsDir(info) && int64(info.GetSize()) == it.size, nil
 }
 
-// send uploads one file and does what the folder asks with the local copy.
-// It reports whether something was sent.
+// send uploads one file and applies the policy to the local copy. It reports
+// whether something was sent.
 func (b *box) send(ctx context.Context, j job, it item) (bool, int64, error) {
 	remote, err := b.RT.RemotePath(ctx, j.remoteFor(it))
 	if err != nil {
@@ -623,20 +608,17 @@ func (b *box) send(ctx context.Context, j job, it item) (bool, int64, error) {
 	case err != nil && !cli.IsNotFound(err):
 		return false, 0, err
 	case err == nil && !userplane.IsDir(info) && int64(info.GetSize()) == it.size:
-		// Up already. The policy still runs, so that a run that uploaded and
-		// failed to tidy up finishes the job.
+		// Run the policy, so that a run that failed to tidy up finishes the job.
 		return false, 0, b.after(j, it)
 	case err == nil:
-		// Taken by another file: an outbox only adds, so this goes next to it
-		// under another name.
+		// An outbox only adds, so a different file with this name stays.
 		if remote, err = b.FreeRemoteName(ctx, remote); err != nil {
 			return false, 0, err
 		}
 	}
-	// The hook runs after the decision that the file goes up, and before it
-	// is read. After, because a hook that rewrites a file must not run on
-	// every pass: it rewrites in place, so the next pass finds the size of the
-	// upload and skips the file before this point. A rename is not followed.
+	// The hook runs only once the file is going up, so that a hook that
+	// rewrites in place does not run on every pass: the next pass finds the
+	// size of the upload and skips the file before this point.
 	if len(j.exec) > 0 {
 		if err := b.hook(ctx, j, it, remote); err != nil {
 			return false, 0, nil
@@ -652,8 +634,7 @@ func (b *box) send(ctx context.Context, j job, it item) (bool, int64, error) {
 	if err := b.Mkdir(ctx, path.Dir(remote)); err != nil && !userplane.IsConflict(err) {
 		return false, 0, err
 	}
-	// Verified when the local copy is about to go: a checksum that the server
-	// agrees with is knowing that it arrived, not assuming it.
+	// Verify only when the local copy is about to go.
 	e, err := b.Engine(ctx, cli.TransferOptions{Overwrite: true, Verify: j.after == "delete"})
 	if err != nil {
 		return false, 0, err
@@ -666,7 +647,7 @@ func (b *box) send(ctx context.Context, j job, it item) (bool, int64, error) {
 		if url, err := b.linkFor(ctx, remote); err != nil {
 			b.Warn("uploaded %s but could not make a link: %v", it.name, userplane.ErrLine(err))
 		} else {
-			// On stdout, so that a pipe into a clipboard tool works.
+			// On stdout, so that it can go into a pipe.
 			b.Line("%s", url)
 		}
 	}
@@ -686,9 +667,8 @@ func (b *box) hook(ctx context.Context, j job, it item, remote string) error {
 	return err
 }
 
-// linkFor makes a public link, read only, for what was just uploaded. Over
-// HTTPS the link is the /s/ URL of the endpoint; without an endpoint the
-// token is all there is.
+// linkFor makes a read-only public link. Without an endpoint, the token is
+// all there is.
 func (b *box) linkFor(ctx context.Context, remote string) (string, error) {
 	info, err := b.Stat(ctx, remote)
 	if err != nil {
@@ -710,7 +690,6 @@ func (b *box) linkFor(ctx context.Context, remote string) (string, error) {
 	return s.GetToken(), nil
 }
 
-// after does what the folder asks once the file is up.
 func (b *box) after(j job, it item) error {
 	switch j.after {
 	case "delete":

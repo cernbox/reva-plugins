@@ -105,7 +105,7 @@ func newTestManager(t *testing.T) *manager {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Without Redis every lookup is a cache miss, which the invocation must handle.
+	// Without Redis every lookup is a cache miss.
 	noRedis := &redis.Pool{Dial: func() (redis.Conn, error) { return nil, errors.New("no redis") }}
 	m := &manager{
 		conf:            &config{APIBaseURL: srv.URL},
@@ -122,20 +122,15 @@ func invokeAccount(t *testing.T, m *manager, user string) (*api.Account, error) 
 	if err != nil {
 		return nil, err
 	}
-	// The result goes through JSON in the Admin API.
 	b, err := json.Marshal(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wire map[string]any
-	if err := json.Unmarshal(b, &wire); err != nil {
+	var a api.Account
+	if err := json.Unmarshal(b, &a); err != nil {
 		t.Fatal(err)
 	}
-	a, err := api.FromResult(wire)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return a, nil
+	return &a, nil
 }
 
 func TestAccountCatalogue(t *testing.T) {

@@ -17,8 +17,7 @@
 // or submit itself to any jurisdiction.
 
 // Package userplane has what the user-plane commands of the cernbox CLI
-// (clipboard, inbox, outbox) share: the calls on paths over Runtime.Backend
-// and Runtime.Data, the messages, and the hooks.
+// (clipboard, inbox, outbox) share.
 package userplane
 
 import (
@@ -107,9 +106,7 @@ func (s *Session) Mkdir(ctx context.Context, p string) error {
 	return s.B.Files().Mkdir(ctx, Ref(p), true)
 }
 
-// RemoveIfPresent removes p, and reports whether there was something. A
-// path that is already gone is no error: the callers make sure that it is
-// absent.
+// RemoveIfPresent removes p, and reports whether there was something.
 func (s *Session) RemoveIfPresent(ctx context.Context, p string) (bool, error) {
 	if _, err := s.Stat(ctx, p); err != nil {
 		if cli.IsNotFound(err) {
@@ -117,13 +114,11 @@ func (s *Session) RemoveIfPresent(ctx context.Context, p string) (bool, error) {
 		}
 		return false, err
 	}
-	if err := s.B.Files().Remove(ctx, Ref(p)); err != nil {
-		if cli.IsNotFound(err) {
-			return false, nil
-		}
-		return false, err
+	err := s.B.Files().Remove(ctx, Ref(p))
+	if cli.IsNotFound(err) {
+		return false, nil
 	}
-	return true, nil
+	return err == nil, err
 }
 
 // FreeRemoteName returns a name next to p that nothing uses: "a (2).txt".
@@ -170,8 +165,7 @@ func (s *Session) Home(ctx context.Context) (string, error) {
 	return s.home, nil
 }
 
-// Username returns the user name of the caller, empty if it cannot be read:
-// the callers only build a sentence with it.
+// Username returns the user name of the caller, or "" if it cannot be read.
 func (s *Session) Username(ctx context.Context) string {
 	u, err := s.B.Users().Me(ctx)
 	if err != nil {

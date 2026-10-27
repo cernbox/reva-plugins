@@ -17,18 +17,12 @@
 // or submit itself to any jurisdiction.
 
 // Package inbox is the command inbox of the cernbox CLI: a CERNBox folder
-// whose arrivals come down to a local one. It pairs with an upload link
-// (somebody drops a file in without an account and it turns up on the
-// laptop) and with a project folder that collaborators write into.
+// whose arrivals come down to a local one.
 //
-// It is the outbox the other way round, with two differences. It polls:
-// nothing tells a client that a remote folder changed, so a watch asks, one
-// listing per folder and pass. And the test that a file has settled compares
-// its modification time with the clock of the server, not of this machine,
-// which would make it wrong by the skew of the two clocks.
-//
-// The folders are [plugins.inbox] folders of the config files, the inbox
-// list of cernbox-cli. The commands use Runtime.Backend and Runtime.Data.
+// It is the outbox the other way round, with two differences. It polls,
+// because nothing tells a client that a remote folder changed. And it tests
+// that a file has settled against the clock of the server, not of this
+// machine, which can be wrong by the skew of the two clocks.
 package inbox
 
 import (
@@ -59,10 +53,8 @@ func init() { cli.RegisterCommand(Name, New) }
 const (
 	// defaultInterval is how often a watch looks: every pass is a request.
 	defaultInterval = time.Minute
-	// defaultSettle is how long a file must be unchanged to count as done.
-	defaultSettle = 2 * time.Second
-	// collectedDir is where --after move puts a file once it is down.
-	collectedDir = ".collected"
+	defaultSettle   = 2 * time.Second
+	collectedDir    = ".collected"
 )
 
 // Config is the section [plugins.inbox].
@@ -87,7 +79,7 @@ type Folder struct {
 	Exec string `toml:"exec"`
 }
 
-// configOf decodes [plugins.inbox] of the config files. Tests replace it.
+// configOf is a variable so that tests can replace it.
 var configOf = func(rt *cli.Runtime) (Config, error) {
 	var c Config
 	err := cli.PluginConfig(rt, Name, &c)
@@ -143,8 +135,6 @@ func open(cmd *cobra.Command, rt *cli.Runtime) (*box, error) {
 	return &box{s}, nil
 }
 
-// jobs are the folders to collect from: the one of the command line, or
-// those of the config.
 func (b *box) jobs(args []string, fl flags) ([]job, error) {
 	if len(args) == 1 {
 		if fl.to == "" {
@@ -209,8 +199,7 @@ func pullCmd(rt *cli.Runtime) *cobra.Command {
 			for _, j := range jobs {
 				got, err := b.run(cmd.Context(), j, fl.settle)
 				if err != nil {
-					// A configured folder that is not there is a warning: the
-					// others have nothing to do with it.
+					// A missing configured folder must not stop the others.
 					if j.configured && cli.IsNotFound(err) {
 						b.Warn("skipping %s: %v", j.remote, userplane.ErrLine(err))
 						continue
@@ -272,8 +261,8 @@ func watchCmd(rt *cli.Runtime) *cobra.Command {
 	return cli.Mutates(cmd)
 }
 
-// watch collects on a timer until the context ends, which is how it
-// finishes (an interrupt, or --timeout), so that is no error.
+// watch ends without an error when the context ends: an interrupt or
+// --timeout.
 func (b *box) watch(ctx context.Context, jobs []job, settle, interval time.Duration) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -284,8 +273,7 @@ func (b *box) watch(ctx context.Context, jobs []job, settle, interval time.Durat
 				if ctx.Err() != nil {
 					return nil
 				}
-				// A watch that stops on one bad pass stops overnight for a
-				// reason nobody sees.
+				// A watch that stops on one bad pass fails unseen overnight.
 				b.Warn("%s: %v", j.remote, userplane.ErrLine(err))
 				continue
 			}
@@ -357,7 +345,6 @@ func statusCmd(rt *cli.Runtime) *cobra.Command {
 	return cmd
 }
 
-// job is one folder, checked.
 type job struct {
 	remote, local, layout, after string
 	exec                         []string
@@ -385,11 +372,10 @@ func newJob(f Folder) (job, error) {
 	return j, nil
 }
 
-// scanResult is what one folder holds.
 type scanResult struct {
 	items []item
-	// dirs are subfolders, which an inbox does not collect. Counted, because
-	// somebody who put a folder there would believe it collected.
+	// dirs counts the subfolders, which an inbox does not collect. Status says
+	// so, because somebody who put a folder there would believe it collected.
 	dirs int
 }
 
@@ -400,8 +386,8 @@ type item struct {
 	settled    bool
 }
 
-// localFor is where a file goes. The date layout takes the date of the file:
-// a file belongs to the day it was made, whenever it is collected.
+// localFor is where a file goes. The date layout uses the date of the file,
+// not of the collection.
 func (j job) localFor(it item) string {
 	if j.layout == "date" {
 		d := it.modified
@@ -410,9 +396,8 @@ func (j job) localFor(it item) string {
 	return filepath.Join(j.local, it.name)
 }
 
-// scan lists the folder and marks the files that stopped changing. An inbox
-// is one folder deep on purpose: deciding that a tree finished arriving is a
-// much harder question than about one file.
+// scan lists the folder one level deep: deciding that a tree finished
+// arriving is much harder than for one file.
 func (b *box) scan(ctx context.Context, j job, settle time.Duration) (scanResult, error) {
 	remote, err := b.RT.RemotePath(ctx, j.remote)
 	if err != nil {
@@ -422,7 +407,7 @@ func (b *box) scan(ctx context.Context, j job, settle time.Duration) (scanResult
 	if err != nil {
 		return scanResult{}, err
 	}
-	// The timestamps were written by the server, so now comes from its clock.
+	// The server wrote the timestamps, so use its clock.
 	now, err := b.B.ServerTime(ctx)
 	if err != nil {
 		b.Warn("could not read the server clock (%v), so using this machine's", userplane.ErrLine(err))
@@ -501,8 +486,8 @@ func (b *box) run(ctx context.Context, j job, settle time.Duration) (result, err
 	return res, nil
 }
 
-// alreadyLocal reports whether the file is down, with the rule of the
-// outbox the other way: a local file of the same size is the same file.
+// alreadyLocal reports whether the file is down. A local file of the same
+// size counts as the same file.
 func alreadyLocal(j job, it item) (bool, error) {
 	info, err := os.Stat(j.localFor(it))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -520,13 +505,9 @@ func (b *box) collect(ctx context.Context, j job, it item) (bool, int64, error) 
 	case err != nil:
 		return false, 0, err
 	case there:
-		// Down already. The policy still runs, so that a pass that downloaded
-		// and failed to tidy up finishes the job.
-		//
-		// So does the hook, but only where the folder tells that it did not
-		// finish: with move or delete, a file still in the inbox is one whose
-		// hook failed. With keep there is no such sign, and it would run again
-		// on every pass.
+		// Run the policy, so that a pass that failed to tidy up finishes the
+		// job. Run the hook only with move or delete: a file still in the inbox
+		// then means that its hook failed. With keep it would run on every pass.
 		if len(j.exec) > 0 && j.after != "keep" {
 			if err := b.hook(ctx, j, it, local); err != nil {
 				return false, 0, nil
@@ -534,16 +515,14 @@ func (b *box) collect(ctx context.Context, j job, it item) (bool, int64, error) 
 		}
 		return false, 0, b.after(ctx, j, it)
 	}
-	// Taken by another file of another size: an inbox only adds, so this goes
-	// next to it under another name.
+	// An inbox only adds, so a different file with this name stays.
 	if userplane.PathTaken(local) {
 		local = userplane.FreeLocalName(local)
 	}
 	if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 		return false, 0, err
 	}
-	// Verified when the CERNBox copy is about to go: a checksum that both
-	// sides agree on is knowing that it arrived, not assuming it.
+	// Verify only when the CERNBox copy is about to go.
 	e, err := b.Engine(ctx, cli.TransferOptions{Overwrite: true, Verify: j.after == "delete"})
 	if err != nil {
 		return false, 0, err
@@ -552,9 +531,8 @@ func (b *box) collect(ctx context.Context, j job, it item) (bool, int64, error) 
 	if err != nil {
 		return false, 0, err
 	}
-	// The hook runs before the policy, and its failure stops the policy: the
-	// CERNBox copy is the only sign that something is unfinished. The file
-	// was downloaded either way, so it counts as collected.
+	// A failed hook stops the policy: the CERNBox copy is the only sign that
+	// something is unfinished. The file is down, so it counts as collected.
 	if len(j.exec) > 0 {
 		if err := b.hook(ctx, j, it, local); err != nil {
 			return true, size, nil
@@ -576,7 +554,6 @@ func (b *box) hook(ctx context.Context, j job, it item, local string) error {
 	return err
 }
 
-// after does what the folder asks once the file is down.
 func (b *box) after(ctx context.Context, j job, it item) error {
 	switch j.after {
 	case "delete":

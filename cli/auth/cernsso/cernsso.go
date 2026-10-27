@@ -16,15 +16,13 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-// Package cernsso is the sign-in method cern-sso of the cernbox CLI: the
+// Package cernsso is the cern-sso sign-in method of the cernbox CLI. The
 // Kerberos ticket of kinit signs in to CERN SSO, which issues the OIDC token
-// that CERNBox takes. It is what auth-get-sso-token does on lxplus, without
-// that RPM.
+// that CERNBox takes.
 //
-// The kerberos method of reva gives the ticket to CERNBox itself. cern-sso
-// comes after it in the chain of the brand, for when the ticket cannot be
-// made for CERNBox (an SPN that the KDC does not know) or for a deployment
-// without the Kerberos auth provider (login --method cern-sso).
+// It comes after the kerberos method in the chain. It is for when the KDC
+// does not know the SPN of CERNBox, or when the server has no Kerberos auth
+// provider.
 package cernsso
 
 import (
@@ -45,21 +43,17 @@ import (
 	"github.com/cs3org/reva/v3/pkg/cli/kerberos"
 )
 
-// Name is the name of the method, in auth.chain and in login --method.
+// Name is the name of the method.
 const Name = "cern-sso"
 
 func init() { cli.RegisterAuth(Name, New) }
 
-// Config is the section [plugins.cern-sso] of the config files. The issuer,
-// the client and the scopes are those of auth.oidc of the brand, the same as
-// the device flow.
+// Config is the section [plugins.cern-sso] of the config files.
 type Config struct {
-	// SPN is the service principal of CERN SSO. Empty means HTTP/<host of
-	// the issuer>, HTTP/auth.cern.ch.
+	// SPN is the service principal of CERN SSO. Empty means HTTP/<issuer host>.
 	SPN string `toml:"spn"`
 	// RedirectURI is a redirect URI of the client. Empty means the
-	// out-of-band one: the code comes back in the redirect, which is never
-	// followed, so no local server is needed.
+	// out-of-band one.
 	RedirectURI string `toml:"redirect_uri"`
 	// CCache is the Kerberos credential cache. Empty means $KRB5CCNAME, then
 	// /tmp/krb5cc_<uid>.
@@ -67,18 +61,17 @@ type Config struct {
 }
 
 // Ticket reads the Kerberos ticket and makes SPNEGO tokens from it.
-// *kerberos.Provider is one. Tests replace it, because a token needs a KDC.
+// Tests replace it, because a token needs a KDC.
 type Ticket interface {
 	Ticket() (*kerberos.Ticket, error)
 	Negotiate(spn string) (string, error)
 }
 
-// Provider implements auth.Provider and auth.Refresher.
+// Provider is the cern-sso auth provider.
 type Provider struct {
-	OIDC       auth.OIDCConfig
-	HTTPClient *http.Client
-	Ticket     Ticket
-	// SPN and RedirectURI are those of Config.
+	OIDC             auth.OIDCConfig
+	HTTPClient       *http.Client
+	Ticket           Ticket
 	SPN, RedirectURI string
 
 	// err is the error of the config section, which New cannot return.
@@ -95,8 +88,7 @@ var (
 	_ auth.IdentityHinter = (*Provider)(nil)
 )
 
-// New returns the provider of the runtime rt: auth.oidc of the brand, and
-// [plugins.cern-sso] of the config files.
+// New returns the provider of the runtime rt.
 func New(rt *cli.Runtime) cli.AuthProvider {
 	o := rt.Brand().Auth.OIDC
 	var c Config
@@ -128,8 +120,7 @@ func (p *Provider) Available(context.Context) bool {
 	return err == nil
 }
 
-// IdentityHint implements auth.IdentityHinter: kinit as another principal
-// selects another cache entry.
+// IdentityHint implements auth.IdentityHinter.
 func (p *Provider) IdentityHint() string {
 	t, err := p.load()
 	if err != nil {
@@ -143,8 +134,7 @@ func (p *Provider) load() (*kerberos.Ticket, error) {
 	return p.ticket, p.tkErr
 }
 
-// Token implements auth.Provider: the authorization code flow with PKCE,
-// where the Kerberos ticket authenticates the request of the code.
+// Token implements auth.Provider with the authorization code flow and PKCE.
 func (p *Provider) Token(ctx context.Context) (*auth.Token, error) {
 	if p.err != nil {
 		return nil, p.err
@@ -160,7 +150,7 @@ func (p *Provider) Token(ctx context.Context) (*auth.Token, error) {
 	if meta.AuthorizationEndpoint == "" {
 		return nil, fmt.Errorf("the identity provider at %s advertises no authorization endpoint", p.OIDC.Issuer)
 	}
-	verifier, challenge, err := newPKCE()
+	verifier, err := random(32)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +158,7 @@ func (p *Provider) Token(ctx context.Context) (*auth.Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	code, err := p.authorizationCode(ctx, meta.AuthorizationEndpoint, challenge, state)
+	code, err := p.authorizationCode(ctx, meta.AuthorizationEndpoint, challengeOf(verifier), state)
 	if err != nil {
 		return nil, err
 	}
@@ -187,8 +177,6 @@ func (p *Provider) Token(ctx context.Context) (*auth.Token, error) {
 	return tok, nil
 }
 
-// authorizationCode asks for the code with the SPNEGO token of CERN SSO,
-// and reads the code from the redirect.
 func (p *Provider) authorizationCode(ctx context.Context, endpoint, challenge, state string) (string, error) {
 	q := url.Values{
 		"response_type":         {"code"},
@@ -217,8 +205,8 @@ func (p *Provider) authorizationCode(ctx context.Context, endpoint, challenge, s
 	}
 	req.Header.Set("Authorization", "Negotiate "+neg)
 
-	// The redirect carries the code: following it would send the code to
-	// whatever the redirect URI names, or fail on the out-of-band one.
+	// The redirect carries the code. Following it would send the code to the
+	// redirect URI, or fail on the out-of-band one.
 	client := *p.HTTPClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	res, err := client.Do(req)
@@ -257,8 +245,7 @@ func (p *Provider) authorizationCode(ctx context.Context, endpoint, challenge, s
 	return code, nil
 }
 
-// Refresh implements auth.Refresher. CERN SSO tokens live twenty minutes,
-// and a refresh is one request instead of a new flow.
+// Refresh implements auth.Refresher.
 func (p *Provider) Refresh(ctx context.Context, tok *auth.Token) (*auth.Token, error) {
 	if tok.RefreshToken == "" {
 		return nil, errors.New("no refresh token")
@@ -276,7 +263,7 @@ func (p *Provider) Refresh(ctx context.Context, tok *auth.Token) (*auth.Token, e
 		return nil, err
 	}
 	out := tr.Token(Name)
-	// Not every issuer rotates the refresh token: keep the one that works.
+	// Not every issuer rotates the refresh token.
 	out.RefreshToken = cmp.Or(out.RefreshToken, tok.RefreshToken)
 	out.Subject = tok.Subject
 	return out, nil
@@ -297,21 +284,13 @@ func (p *Provider) spn() (string, error) {
 	return "HTTP/" + u.Hostname(), nil
 }
 
-// scopes are those of the device flow: offline_access gives the refresh
-// token.
+// scopes returns the scopes of the device flow. offline_access gives the
+// refresh token.
 func scopes(c auth.OIDCConfig) []string {
 	if len(c.Scopes) > 0 {
 		return c.Scopes
 	}
 	return []string{"openid", "profile", "offline_access"}
-}
-
-// newPKCE returns a verifier and its S256 challenge (RFC 7636).
-func newPKCE() (verifier, challenge string, err error) {
-	if verifier, err = random(32); err != nil {
-		return "", "", err
-	}
-	return verifier, challengeOf(verifier), nil
 }
 
 func challengeOf(verifier string) string {

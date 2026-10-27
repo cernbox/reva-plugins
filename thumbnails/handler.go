@@ -135,8 +135,8 @@ func New(ctx context.Context, m map[string]interface{}) (global.Service, error) 
 	return s, nil
 }
 
-// gatewayDownloader resolves the gateway on each download, because the gateway
-// may not be registered yet when the service starts.
+// gatewayDownloader resolves the gateway on each download, because it may not
+// be registered yet when the service starts.
 type gatewayDownloader struct {
 	client *httpclient.Client
 }

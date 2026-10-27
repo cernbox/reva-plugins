@@ -16,8 +16,8 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-// Package otg is the CLI plugin `otg`: it shows, sets and clears the OTG
-// message of CERNBox through the invocations of the otg service.
+// Package otg is the otg CLI plugin. It shows, sets and clears the OTG
+// message of CERNBox.
 package otg
 
 import (
@@ -114,8 +114,6 @@ func clearCmd(rt *cli.Runtime) *cobra.Command {
 	return cli.Mutates(cmd)
 }
 
-// invoke calls an otg invocation, and prints the message that users see
-// after it.
 func invoke(cmd *cobra.Command, rt *cli.Runtime, invocation string, args map[string]string) error {
 	var st api.Status
 	if err := rt.Invoke(cmd.Context(), api.Service, invocation, args, &st); err != nil {
@@ -137,8 +135,7 @@ func readFile(cmd *cobra.Command, name string) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
-// preview puts the message on one short line, so that the question of the
-// confirmation stays readable.
+// preview puts the message on one short line for the confirmation.
 func preview(msg string) string {
 	const limit = 80
 	msg = strings.Join(strings.Fields(msg), " ")

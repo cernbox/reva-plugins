@@ -16,14 +16,11 @@
 // granted to it by virtue of its status as an Intergovernmental Organization
 // or submit itself to any jurisdiction.
 
-// Package cli links the CLI plugins of CERNBox into the `cernbox` build of
-// the reva CLI (gaia --binary reva --with github.com/cernbox/reva-plugins/cli).
-// It imports only CLI plugins, and the root package only backend plugins, so
-// that revad and the CLI each link only their own plugins.
+// Package cli links the CLI plugins of CERNBox into the cernbox build of the
+// reva CLI. It imports only CLI plugins, so that revad does not link them.
 package cli
 
 import (
-	// Add here all the CLI plugins of cernbox.
 	_ "github.com/cernbox/reva-plugins/cli/auth/cernsso"
 	_ "github.com/cernbox/reva-plugins/cli/clipboard"
 	_ "github.com/cernbox/reva-plugins/cli/inbox"

@@ -18,8 +18,6 @@
 
 // Package fakeadmin runs the CLI against a fake Admin API, for the tests of
 // the CLI plugins.
-//
-// TODO(T39): use the fakes of pkg/cli/clitest when reva has them.
 package fakeadmin
 
 import (

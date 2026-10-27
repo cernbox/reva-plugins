@@ -77,11 +77,9 @@ func TestPullDownloadsWhatIsThere(t *testing.T) {
 	if !strings.Contains(r.Stderr, "Downloaded 2 files") {
 		t.Errorf("stderr %q", r.Stderr)
 	}
-	// The default is keep: the CERNBox copy stays.
 	if got := e.Content(t, remote+"/a.txt"); got != "alpha" {
 		t.Errorf("remote copy %q", got)
 	}
-	// A second pass finds them down already.
 	if r := e.Must(t, "inbox", "pull", remote, "--to", local, "--settle", "0"); !strings.Contains(r.Stderr, "2 files already here") {
 		t.Errorf("second pass: %q", r.Stderr)
 	}
@@ -185,11 +183,9 @@ func TestConfiguredFolders(t *testing.T) {
 	if got := readLocal(t, filepath.Join(local, "a.txt")); got != "alpha" {
 		t.Errorf("collected %q", got)
 	}
-	// --after overrides the config of every folder.
 	if _, ok := e.B.Content(remote + "/a.txt"); !ok {
 		t.Error("--after keep did not override the config")
 	}
-	// A configured folder that is not there is a warning.
 	if !strings.Contains(r.Stderr, "skipping /gone") {
 		t.Errorf("stderr %q", r.Stderr)
 	}
@@ -204,8 +200,6 @@ func withConfig(t *testing.T, c Config) {
 	t.Cleanup(func() { configOf = old })
 }
 
-// The section as the config file has it, and as the migration of the
-// config.yaml of cernbox-cli writes it.
 func TestConfigFile(t *testing.T) {
 	e, local := setup(t, map[string]string{"a.txt": "alpha"})
 	e.WriteConfig(t, "[[plugins.inbox.folders]]\nremote = \""+remote+"\"\nlocal = \""+local+"\"\n")
@@ -261,7 +255,6 @@ func TestHookFailureLeavesTheFileInTheInbox(t *testing.T) {
 	if _, ok := e.B.Content(remote + "/m.csv"); !ok {
 		t.Fatal("the copy was moved although the hook failed")
 	}
-	// The next pass runs the hook again, because the file is still there.
 	working, log := plugintest.RecordingHook(t, "0")
 	e.Must(t, "inbox", "pull", remote, "--to", local, "--settle", "0", "--after", "move", "--exec", working)
 	if calls := plugintest.Calls(t, log); len(calls) != 1 {
@@ -272,8 +265,6 @@ func TestHookFailureLeavesTheFileInTheInbox(t *testing.T) {
 	}
 }
 
-// The names come from whoever fills the folder: they reach the hook whole,
-// and no shell sees them.
 func TestHookGetsNoShell(t *testing.T) {
 	const nasty = "safe.txt; touch pwned"
 	e, local := setup(t, map[string]string{nasty: "x"})

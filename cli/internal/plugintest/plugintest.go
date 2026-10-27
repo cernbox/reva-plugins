@@ -18,8 +18,7 @@
 
 // Package plugintest runs the user-plane commands of the CLI plugins on the
 // fake backend of pkg/cli/clitest. revacmd.NewRoot builds its own runtime,
-// so a test cannot give it the fake: Env builds a root with the global
-// flags and the hook of the core root, and the commands of the plugin.
+// so Env builds a root of its own with the commands of the plugin.
 package plugintest
 
 import (
@@ -100,7 +99,6 @@ func (e *Env) Start(t *testing.T, in io.Reader, args ...string) func() (Result, 
 			if err := rt.Load(cmd.Flags()); err != nil {
 				return err
 			}
-			// As the root of the core does for --timeout.
 			if rt.Timeout() > 0 {
 				ctx, cancel := context.WithTimeout(cmd.Context(), rt.Timeout())
 				cobra.OnFinalize(cancel)

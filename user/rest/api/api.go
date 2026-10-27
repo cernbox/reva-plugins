@@ -17,8 +17,7 @@
 // or submit itself to any jurisdiction.
 
 // Package api has the result of the driver.account invocation of the
-// user/rest driver. It has no init(), so that a CLI plugin can import it
-// without the driver.
+// user/rest driver. A CLI plugin can import it without the driver.
 package api
 
 import (
@@ -38,8 +37,7 @@ const (
 	ArgUser = "user"
 )
 
-// Account is a CERN account as Grappa knows it. All the keys are always in
-// the result, with an empty value or null if Grappa has no value.
+// Account is a CERN account as Grappa knows it.
 type Account struct {
 	Username string `json:"username"`
 	// Type is the CS3 type of the account: primary, secondary, service,
@@ -72,7 +70,7 @@ type Account struct {
 }
 
 // Result gives the account as an invocation result. The values are JSON
-// values, so that the result is the same before and after the transport.
+// values, so the result is the same before and after the transport.
 func (a *Account) Result() (map[string]any, error) {
 	b, err := json.Marshal(a)
 	if err != nil {
@@ -83,17 +81,4 @@ func (a *Account) Result() (map[string]any, error) {
 		return nil, err
 	}
 	return r, nil
-}
-
-// FromResult reads an account from the result of the invocation.
-func FromResult(r map[string]any) (*Account, error) {
-	b, err := json.Marshal(r)
-	if err != nil {
-		return nil, err
-	}
-	var a Account
-	if err := json.Unmarshal(b, &a); err != nil {
-		return nil, err
-	}
-	return &a, nil
 }
