@@ -22,6 +22,9 @@ backend plugins through the Admin API:
 * `cernbox otg get|set|clear`: the `otg` invocations.
 * `cernbox user account <user>`: the `driver.account` invocation of the userprovider (`user/rest`).
 
+`cli/auth/cernsso` adds the sign-in method `cern-sso`: the Kerberos ticket of kinit signs in to CERN SSO, which
+issues an OIDC token. It comes after `kerberos` in the chain of the brand.
+
 The package `github.com/cernbox/reva-plugins/cli` imports only the CLI plugins, and the root package only the
 backend plugins, so that revad and the CLI each link only their own plugins. A plugin that the CLI refuses (for
 example, a name that a core command has) only gives a warning when the CLI starts. The test of `cli` runs

@@ -47,6 +47,7 @@ func TestVersionListsThePlugins(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
+		"cli.auth.cern-sso", "github.com/cernbox/reva-plugins/cli/auth/cernsso",
 		"cli.commands.otg", "github.com/cernbox/reva-plugins/cli/otg",
 		"cli.commands.user.account", "github.com/cernbox/reva-plugins/cli/user",
 	} {
