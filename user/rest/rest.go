@@ -61,6 +61,8 @@ func (manager) RevaPlugin() reva.PluginInfo {
 	}
 }
 
+const CERN_ACCOUNTS_PROVIDER_ID = "f0000000-0000-0000-0000-000000000011"
+
 type config struct {
 	// The address at which the redis server is running
 	RedisAddress string `mapstructure:"redis_address" docs:"localhost:6379"`
@@ -160,7 +162,7 @@ func (m *manager) Configure(ml map[string]interface{}, ctx context.Context) erro
 	// Since we're starting a subroutine which would take some time to execute,
 	// we can't wait to see if it works before returning the user.Manager object
 	// TODO: return err if the fetch fails
-	go m.fetchAllUsers(context.Background())
+	go m.fetchAllUsers(context.WithoutCancel(ctx))
 	return nil
 }
 
@@ -192,20 +194,61 @@ type Identity struct {
 	Type                string `json:"type,omitempty"`
 	Upn                 string `json:"upn"`
 	DisplayName         string `json:"displayName"`
-	Source              string `json:"source,omitempty"`
-	ActiveUser          bool   `json:"activeUser,omitempty"`
 	UID                 int    `json:"uid,omitempty"`
 	GID                 int    `json:"gid,omitempty"`
+	Source              string `json:"source,omitempty"`
 	InternalState       string `json:"internalState,omitempty"`
+	AccountProviderId   string `json:"accountProviderId,omitempty"`
 }
 
 // IdentitiesResponse contains the expected response from grappa
-// when getting the list of users.
+// when getting the list of identities.
 type IdentitiesResponse struct {
 	Pagination struct {
 		Next *string `json:"next"`
 	} `json:"pagination"`
 	Data []*Identity `json:"data"`
+}
+
+// Account is a single entry returned by the Account endpoint of grappa:
+// the user details are nested in the owner, whereas the account holds
+// the email address and the internal state.
+type Account struct {
+	EmailAddress      string `json:"emailAddress,omitempty"`
+	InternalState     string `json:"internalState,omitempty"`
+	AccountProviderId string `json:"accountProviderId,omitempty"`
+	Owner             struct {
+		Type        string `json:"type,omitempty"`
+		Upn         string `json:"upn"`
+		DisplayName string `json:"displayName"`
+		UID         int    `json:"uid,omitempty"`
+		GID         int    `json:"gid,omitempty"`
+		Source      string `json:"source,omitempty"`
+	} `json:"owner"`
+}
+
+// AccountsResponse contains the expected response from grappa
+// when getting the list of accounts.
+type AccountsResponse struct {
+	Pagination struct {
+		Next *string `json:"next"`
+	} `json:"pagination"`
+	Data []*Account `json:"data"`
+}
+
+// Identity converts an Account to the flat Identity representation.
+func (a *Account) Identity() *Identity {
+	return &Identity{
+		PrimaryAccountEmail: a.EmailAddress,
+		Type:                a.Owner.Type,
+		Upn:                 a.Owner.Upn,
+		DisplayName:         a.Owner.DisplayName,
+		UID:                 a.Owner.UID,
+		GID:                 a.Owner.GID,
+		Source:              a.Owner.Source,
+		InternalState:       a.InternalState,
+		AccountProviderId:   a.AccountProviderId,
+	}
 }
 
 // UserType convert the user type in grappa to CS3APIs.
@@ -218,12 +261,12 @@ func (i *Identity) UserType() userpb.UserType {
 	case "Secondary":
 		return userpb.UserType_USER_TYPE_SECONDARY
 	case "Person":
-		if i.Source == "cern" && (i.InternalState == "Active" || i.InternalState == "GracePeriod") {
+		if i.AccountProviderId == CERN_ACCOUNTS_PROVIDER_ID && (i.InternalState == "Active" || i.InternalState == "GracePeriod") {
 			// this is a CERN account of an active user. Users beyond the grace period may have a linked
 			// account but in that case they are to be considered external.
 			return userpb.UserType_USER_TYPE_PRIMARY
 		}
-		// external user: either from external IdPs or linked accounts beyond grace period
+		// external user: either from an external IdP or a linked account beyond grace period
 		return userpb.UserType_USER_TYPE_LIGHTWEIGHT
 	default:
 		return userpb.UserType_USER_TYPE_INVALID
@@ -231,16 +274,21 @@ func (i *Identity) UserType() userpb.UserType {
 }
 
 func (m *manager) fetchAllUserAccounts(ctx context.Context) error {
-	url := fmt.Sprintf("%s/api/v1.0/Identity?filter=unconfirmed%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=uid&field=gid&field=type&field=source&field=activeUser&field=internalState", m.conf.APIBaseURL)
+	url := fmt.Sprintf("%s/api/v1.0/Account?field=owner&field=accountProviderId&field=emailAddress&field=internalState", m.conf.APIBaseURL)
+	log := appctx.GetLogger(ctx)
 
 	for {
-		var r IdentitiesResponse
+		var r AccountsResponse
 		if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
 			return err
 		}
 
-		for _, usr := range r.Data {
-			if _, err := m.parseAndCacheUser(ctx, usr); err != nil {
+		for _, acc := range r.Data {
+			if acc == nil {
+				continue
+			}
+			if _, err := m.parseAndCacheUser(ctx, acc.Identity()); err != nil {
+				log.Error().Err(err).Any("acc", acc).Msg("rest: failed to parse account")
 				continue
 			}
 		}
@@ -260,7 +308,7 @@ func (m *manager) fetchExternalUserByEmail(ctx context.Context, email string) (*
 	}
 
 	log := appctx.GetLogger(ctx)
-	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=type&field=source&field=activeUser&field=internalState", m.conf.APIBaseURL, neturl.PathEscape(email))
+	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=unconfirmed%%3Afalse&filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=primaryAccountEmail&field=displayName&field=type&field=source", m.conf.APIBaseURL, neturl.PathEscape(email))
 
 	var r IdentitiesResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
@@ -299,8 +347,17 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 		DisplayName: i.DisplayName,
 		UidNumber:   int64(i.UID),
 		GidNumber:   int64(i.GID),
+		Status:      userpb.UserStatus_USER_STATUS_ACTIVE,
 	}
-	if i.UserType() == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
+	if i.InternalState == "GracePeriod" {
+		// keep track that this account is going to expire, i.e. the user just left CERN
+		u.Status = userpb.UserStatus_USER_STATUS_EXPIRING
+	}
+	if i.UserType() == userpb.UserType_USER_TYPE_PRIMARY || i.UserType() == userpb.UserType_USER_TYPE_SECONDARY || i.UserType() == userpb.UserType_USER_TYPE_SERVICE {
+		if u.UidNumber == 0 || u.GidNumber == 0 {
+			return nil, errors.New("Cannot parse a primary user without UID or GID")
+		}
+	} else if i.UserType() == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
 		if i.PrimaryAccountEmail != "" {
 			u.Id.OpaqueId = i.PrimaryAccountEmail
 			u.UidNumber = 0
@@ -309,12 +366,9 @@ func (m *manager) parseAndCacheUser(ctx context.Context, i *Identity) (*userpb.U
 			return nil, errors.New("Cannot parse a lightweight user without an associated email")
 		}
 	}
-
 	u.Username = revautils.FormatUserID(u.Id)
-	if i.ActiveUser == false && u.Id.Type == userpb.UserType_USER_TYPE_PRIMARY {
-		// keep track that this primary account is going to expire, i.e. has left CERN
-		u.Status = userpb.UserStatus_USER_STATUS_EXPIRING
 
+	if u.Status == userpb.UserStatus_USER_STATUS_EXPIRING {
 		// check if the user was active before: if so, notify the lifecycle manager that the user has left CERN
 		cachedUser, err := m.cache.GetByID(ctx, u.Id.OpaqueId)
 		if err != nil {
