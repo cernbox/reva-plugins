@@ -22,6 +22,12 @@ backend plugins through the Admin API:
 * `cernbox otg get|set|clear`: the `otg` invocations.
 * `cernbox user account <user>`: the `driver.account` invocation of the userprovider (`user/rest`).
 
+The user-plane commands of cernbox-cli use the backend interface and the data plane of the CLI, over gRPC or
+HTTPS:
+
+* `cernbox copy|paste` and `cernbox clipboard list|clear` (`cli/clipboard`): the clipboard across machines and
+  people, kept in the home space.
+
 `cli/auth/cernsso` adds the sign-in method `cern-sso`: the Kerberos ticket of kinit signs in to CERN SSO, which
 issues an OIDC token. It comes after `kerberos` in the chain of the brand.
 
