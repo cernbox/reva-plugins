@@ -25,6 +25,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: cs3org/reva
+          # Temporary: this branch needs the router interface of
+          # cs3org/reva#5842, which is not on reva's master yet. Revert this
+          # commit once that is merged.
+          ref: http-router
           path: reva
       - run: mv reva ../reva
       - name: Go mod tidy
