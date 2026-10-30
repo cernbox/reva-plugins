@@ -196,6 +196,12 @@ func (c *UserCache) GetGroups(ctx context.Context, opaqueID string) ([]string, e
 	return groups, nil
 }
 
+// GroupsKeyOwner returns the OpaqueId of the user whose group membership list
+// is stored under key, or false if key does not hold one.
+func GroupsKeyOwner(key string) (string, bool) {
+	return strings.CutPrefix(key, userGroupsPrefix)
+}
+
 // StoreIAMUUID records the two-way mapping between an OpaqueId and the IAM
 // account UUID: GetIAMUUID for calls into the IAM API, GetOpaqueIDByIAMUUID
 // for logins and so the group driver reports the OpaqueId GetUser would.
