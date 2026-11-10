@@ -58,10 +58,10 @@ redis_sentinel_mode = true
 redis_master_name = "master"
 redis_password = "secret"
 # the cephmount mounts on the node
-mount_ids = ["doylehdd01", "doylegen01"]
-service_user_name = "cbox"
-service_user_uid = 58679
-service_user_gid = 1028
+mount_ids = ["mount_1", "mount_2"]
+service_user_name = "account_name"
+service_user_uid = 12345
+service_user_gid = 12345
 # defaults
 mount_path = "/winspaces"   # the mount_path of the storage providers
 space_depth = 3             # their space_depth
