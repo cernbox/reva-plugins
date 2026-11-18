@@ -145,7 +145,9 @@ func New(ctx context.Context, m map[string]interface{}) (group.Manager, error) {
 }
 
 func (m *manager) fetchAllGroups(ctx context.Context) {
-	_ = m.fetchAllGroupAccounts(ctx)
+	if err := m.fetchAllGroupAccounts(ctx); err != nil {
+		log.Error().Err(err).Msg("rest: failed to fetch all groups on startup")
+	}
 	ticker := time.NewTicker(time.Duration(m.conf.GroupFetchInterval) * time.Second)
 	work := make(chan os.Signal, 1)
 	signal.Notify(work, syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT)
@@ -155,7 +157,9 @@ func (m *manager) fetchAllGroups(ctx context.Context) {
 		case <-work:
 			return
 		case <-ticker.C:
-			_ = m.fetchAllGroupAccounts(ctx)
+			if err := m.fetchAllGroupAccounts(ctx); err != nil {
+				log.Error().Err(err).Msg("rest: failed to fetch all groups periodically")
+			}
 		}
 	}
 }
@@ -294,6 +298,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 	members := []*userpb.UserId{}
 	for {
 		if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
+			log.Error().Err(err).Msgf("rest: failed to fetch members of group %s", gid.OpaqueId)
 			return nil, err
 		}
 

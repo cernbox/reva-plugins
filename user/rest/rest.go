@@ -394,7 +394,7 @@ func (m *manager) fetchExternalIdentities(ctx context.Context, email string) ([]
 	url := fmt.Sprintf("%s/api/v1.0/Identity/by_email/%s?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=upn&field=source", m.conf.APIBaseURL, neturl.PathEscape(email))
 	var r *IdentitiesResponse
 	if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
-		log.Error().Err(err).Msgf("error fetching external identities for %s", email)
+		log.Error().Err(err).Msgf("failed to fetch external identities for %s", email)
 		return nil, err
 	}
 
@@ -609,7 +609,8 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 	if uid.Type == userpb.UserType_USER_TYPE_LIGHTWEIGHT {
 		extIds, err := m.fetchExternalIdentities(ctx, uid.OpaqueId)
 		if err != nil {
-			log.Error().Err(err).Msgf("Failed to fetch external identities for lightweight user")
+			log.Error().Err(err).Msgf("failed to fetch external identities for lightweight user")
+			return nil, err
 		}
 		uid.ExternalIdentities = extIds
 		uids = list.Map(uid.ExternalIdentities, func(id *userpb.ExternalIdentity) string { return id.OpaqueId })
@@ -622,6 +623,7 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 		url := fmt.Sprintf("%s/api/v1.0/Identity/%s/groups/recursive?filter=blocked%%3Afalse&filter=disabled%%3Afalse&field=groupIdentifier", m.conf.APIBaseURL, neturl.PathEscape(id))
 		var r GroupsResponse
 		if err := m.apiTokenManager.SendAPIGetRequest(ctx, url, false, &r); err != nil {
+			log.Error().Err(err).Msgf("failed to recursively resolve groups for user %s", id)
 			return nil, err
 		}
 
