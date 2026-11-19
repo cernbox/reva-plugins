@@ -301,6 +301,7 @@ func (m *manager) GetMembers(ctx context.Context, gid *grouppb.GroupId) ([]*user
 			log.Error().Err(err).Msgf("rest: failed to fetch members of group %s", gid.OpaqueId)
 			return nil, err
 		}
+		log.Info().Msgf("successfully resolved users for group %s", gid.OpaqueId)
 
 		users := list.Map(r.Data, func(i *userrest.Identity) *userpb.UserId {
 			return &userpb.UserId{OpaqueId: i.Upn, Idp: m.conf.IDProvider, Type: i.UserType()}
