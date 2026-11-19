@@ -626,6 +626,7 @@ func (m *manager) GetUserGroups(ctx context.Context, uid *userpb.UserId) ([]stri
 			log.Error().Err(err).Msgf("failed to recursively resolve groups for user %s", id)
 			return nil, err
 		}
+		log.Info().Msgf("successfully resolved groups for user %s", id)
 
 		fetchedGroups := list.Map(r.Data, func(g Group) string { return strings.ToLower(g.GroupIdentifier) })
 		groups.Add(fetchedGroups...)
