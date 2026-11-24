@@ -533,7 +533,7 @@ func (f *fs) ListRecycle(ctx context.Context, basePath, key, relativePath string
 	return nil, errtypes.NotSupported("Operation Not Permitted")
 }
 
-func (f *fs) RestoreRecycleItem(ctx context.Context, basePath, key, relativePath string, restoreRef *provider.Reference) error {
+func (f *fs) RestoreRecycleItem(ctx context.Context, basePath, key, relativePath string, restoreRef *provider.Reference, force bool) error {
 	return errtypes.NotSupported("Operation Not Permitted")
 }
 
