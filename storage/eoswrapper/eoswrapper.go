@@ -33,6 +33,7 @@ import (
 	"github.com/cs3org/reva/v3"
 	"github.com/cs3org/reva/v3/pkg/appctx"
 	"github.com/cs3org/reva/v3/pkg/errtypes"
+	"github.com/cs3org/reva/v3/pkg/reconciliation"
 	"github.com/cs3org/reva/v3/pkg/spaces"
 	"github.com/cs3org/reva/v3/pkg/storage"
 	eosfs "github.com/cs3org/reva/v3/pkg/storage/fs/eos"
@@ -52,8 +53,9 @@ const (
 	blockedDirectory = ".blocked"
 )
 
+// The deep reconciliation job reaches the driver only through these methods.
 type FSWithListRegexSupport interface {
-	storage.FS
+	reconciliation.ReconcilableFS
 	ListWithRegex(ctx context.Context, path, regex string, depth uint, user *userpb.User) ([]*provider.ResourceInfo, error)
 }
 
